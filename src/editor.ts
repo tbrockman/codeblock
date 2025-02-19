@@ -1,128 +1,173 @@
 import { EditorView, basicSetup } from "codemirror";
-import { Compartment, EditorState, Facet, FacetReader, StateField } from "@codemirror/state";
+import { Compartment, EditorState, Facet } from "@codemirror/state";
 import { ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { debounce } from "lodash";
 
 (window as any).fs = {
-    // @ts-ignore
     readFile: async (path) => "// Initial file content",
-    // @ts-ignore
     writeFile: async (path, content) => console.log("Saving:", path, content),
-    // @ts-ignore
-    watch: (path, callback) => ({ close: () => console.log("Stopped watching", path) })
-};
+    watch: (path, options) => {
+        return {
+            [Symbol.asyncIterator]() {
+                let firstCall = true;
+                return {
+                    async next() {
+                        if (firstCall) {
+                            firstCall = false;
+                            return {
+                                done: false,
+                                value: { eventType: 'change', filename: 'test.txt' }
+                            };
+                        }
+                        // Block forever after first element
+                        return new Promise(() => { });
+                    }
+                };
+            }
+        };
+    },
+    mkdir: (path: string, options: { recursive: boolean }) => Promise.resolve(),
+    exists: (path: string) => Promise.resolve(true),
+} as FS;
 
 interface FS {
-    readFile: (path: string, encoding: string) => Promise<string>;
-    writeFile: (path: string, content: string) => Promise<void>;
-    watch: (path: string, callback: () => void) => { close: () => void };
-    mkdir?: (path: string) => Promise<void>;
+    /**
+     * Reads the entire contents of a file asynchronously
+     * @param path A path to a file
+     */
+    readFile: (
+        path: string,
+    ) => Promise<string>;
+
+    /**
+     * Writes data to a file asynchronously
+     * @param path A path to a file
+     * @param data The data to write
+     */
+    writeFile: (
+        path: string,
+        data: string,
+    ) => Promise<void>;
+
+    /**
+     * Watch for changes to a file or directory
+     * @param path A path to a file/directory
+     * @param options Configuration options for watching
+     */
+    watch: (
+        path: string,
+        options: {
+            signal: AbortSignal,
+        }
+    ) => AsyncIterable<{ eventType: 'rename' | 'change', filename: string }>;
+
+    /**
+     * Creates a directory asynchronously
+     * @param path A path to a directory, URL, or parent FileSystemDirectoryHandle
+     * @param options Configuration options for directory creation
+     */
+    mkdir: (
+        path: string,
+        options: {
+            recursive: boolean,
+        }
+    ) => Promise<void>;
+
+    /**
+     * Checks whether a given file or folder exists
+     * @param path A path to a file or folder
+     * @returns A promise that resolves to true if the file or folder exists, false otherwise
+     */
+    exists: (
+        path: string,
+    ) => Promise<boolean>;
 }
 
-/** Facet for configuring the file system and path */
-const FileSystemFacet = Facet.define<{ fs: FS; path: string }, { fs: FS; path: string }>({
-    combine: (values) => values[0] ?? { fs: null as any, path: "untitled.txt" }
+type CodeblockConfig = { fs: FS; path: string; toolbar: boolean };
+const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
+    combine: (values) => values[0]
 });
-
 const compartment = new Compartment();
 
-/** State field to hold the current file content */
-const FileContentField = StateField.define<string>({
-    create(state) {
-        return ""
-        // const { fs, path } = state.facet(FileConfigFacet);
-        // return fs.readFile(path, "utf-8").catch(() => "").then((content) => content);
-    },
-    update(value, transaction) {
-        if (transaction.docChanged) return transaction.newDoc.toString();
-        return value;
-    }
-});
+const codeblock = ({ fs, path, toolbar }: CodeblockConfig) => {
+    return [
+        compartment.of(CodeblockFacet.of({ fs, path, toolbar })),
+        CodeblockViewPlugin
+    ]
+}
 
-/** View plugin to handle file system synchronization */
-const FileSyncPlugin = ViewPlugin.define((view: EditorView) => {
-    let { fs, path } = view.state.facet(FileSystemFacet);
+const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
+    let { fs, path, toolbar } = view.state.facet(CodeblockFacet);
+    let { signal, abort } = new AbortController();
     let updatingFromFS = false;
 
-    // Debounced save function
     const save = debounce(async () => {
         if (updatingFromFS) return;
-        const content = view.state.field(FileContentField);
-        await fs.writeFile(path, content).catch(console.error);
+        await fs.writeFile(path, view.state.doc.toString()).catch(console.error);
     }, 500);
 
-    // Sync external file changes
-    const watcher = fs.watch(path, async () => {
-        updatingFromFS = true;
+    (async () => {
         try {
-            const content = await fs.readFile(path, "utf-8");
-            view.dispatch({
-                changes: { from: 0, to: view.state.doc.length, insert: content },
-            });
-        } catch (err) {
-            console.error("Failed to sync file changes", err);
+            for await (const _ of fs.watch(path, { signal })) {
+                updatingFromFS = true;
+                try {
+                    const content = await fs.readFile(path);
+                    view.dispatch({
+                        changes: { from: 0, to: view.state.doc.length, insert: content },
+                    });
+                } catch (err) {
+                    console.error("Failed to sync file changes", err);
+                }
+                updatingFromFS = false;
+            }
+        } catch (err: any) {
+            if (err.name === 'AbortError') return;
+            throw err;
         }
-        updatingFromFS = false;
-    });
+    })();
+
+    let toolbarElement: HTMLElement | null = null;
+    if (toolbar) {
+        toolbarElement = document.createElement("div");
+        toolbarElement.className = "cm-toolbar";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = path;
+        input.className = "cm-toolbar-input";
+        toolbarElement.appendChild(input);
+        view.dom.parentElement?.insertBefore(toolbarElement, view.dom);
+        input.addEventListener("input", (event) => {
+            path = (event.target as HTMLInputElement).value;
+            view.dispatch({ effects: compartment.reconfigure(CodeblockFacet.of({ fs, path, toolbar })) });
+        });
+    }
 
     return {
         update(update: ViewUpdate) {
-            // @ts-expect-error
-            ({ path, fs } = compartment.get(update.state)?.value);
+            ({ fs, path, toolbar } = update.state.facet(CodeblockFacet));
             if (update.docChanged) save();
         },
         destroy() {
-            watcher.close();
+            abort();
+            toolbarElement?.remove();
         }
     };
 });
 
-/** View plugin to create the toolbar */
-const ToolbarPlugin = ViewPlugin.define((view: EditorView) => {
-    let { path, fs } = view.state.facet(FileSystemFacet);
-    const toolbar = document.createElement("div");
-    toolbar.className = "cm-toolbar";
-
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = path;
-    input.className = "cm-toolbar-input";
-
-    toolbar.appendChild(input);
-    view.dom.parentElement?.insertBefore(toolbar, view.dom);
-
-    input.addEventListener("input", (event) => {
-        path = (event.target as HTMLInputElement).value;
-        view.dispatch({ effects: compartment.reconfigure(FileSystemFacet.of({ path, fs })) });
-    });
-
-    return {
-        destroy() {
-            toolbar.remove();
-        }
-    };
-});
-
-/** Utility function to create a configured CodeMirror instance */
-export function createCodeEditor(parent: HTMLElement, fs: FS, path: string) {
+export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
     const state = EditorState.create({
         extensions: [
             basicSetup,
-            compartment.of(FileSystemFacet.of({ fs, path })),
-            FileContentField,
-            FileSyncPlugin,
-            ToolbarPlugin
+            codeblock({ fs, path, toolbar }),
         ]
     });
-
     return new EditorView({ state, parent });
 }
 
-/** Web component that uses the createCodeEditor utility */
 class CodeEditor extends HTMLElement {
     private editorView?: EditorView;
-    private fs!: FS;
-    private path!: string;
+    private fs: FS | null = null;
+    private path: string | null = null;
 
     constructor() {
         super();
@@ -130,8 +175,8 @@ class CodeEditor extends HTMLElement {
     }
 
     connectedCallback() {
-        this.path = this.getAttribute("file-path") || "untitled.txt";
-        this.fs = (window as any).fs;
+        this.path = this.getAttribute("file-path") || null;
+        this.fs = (window as any).fs || null;
 
         if (!this.fs) {
             console.error("No filesystem provided.");
@@ -181,7 +226,7 @@ class CodeEditor extends HTMLElement {
 
         const editorContainer = this.shadowRoot.querySelector(".editor") as HTMLDivElement;
 
-        this.editorView = createCodeEditor(editorContainer, this.fs, this.path);
+        this.editorView = createCodeblock(editorContainer, this.fs!, this.path!);
     }
 
     disconnectedCallback() {
