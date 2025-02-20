@@ -2,6 +2,14 @@ import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, Facet } from "@codemirror/state";
 import { ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { debounce } from "lodash";
+import { codeblockTheme } from "./theme";
+import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
+
+declare global {
+    interface Window {
+        fs: FS;
+    }
+}
 
 (window as any).fs = {
     readFile: async (path) => "// Initial file content",
@@ -135,7 +143,7 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
         input.value = path;
         input.className = "cm-toolbar-input";
         toolbarElement.appendChild(input);
-        view.dom.parentElement?.insertBefore(toolbarElement, view.dom);
+        view.dom.prepend(toolbarElement);
         input.addEventListener("input", (event) => {
             path = (event.target as HTMLInputElement).value;
             view.dispatch({ effects: compartment.reconfigure(CodeblockFacet.of({ fs, path, toolbar })) });
@@ -159,79 +167,13 @@ export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolb
         extensions: [
             basicSetup,
             codeblock({ fs, path, toolbar }),
+            vscodeDark,
+            codeblockTheme
         ]
     });
     return new EditorView({ state, parent });
 }
 
-class CodeEditor extends HTMLElement {
-    private editorView?: EditorView;
-    private fs: FS | null = null;
-    private path: string | null = null;
+const editorContainer = document.getElementById('editor') as HTMLDivElement;
 
-    constructor() {
-        super();
-        this.attachShadow({ mode: "open" });
-    }
-
-    connectedCallback() {
-        this.path = this.getAttribute("file-path") || null;
-        this.fs = (window as any).fs || null;
-
-        if (!this.fs) {
-            console.error("No filesystem provided.");
-            return;
-        }
-
-        this.render();
-    }
-
-    private render() {
-        if (!this.shadowRoot) return;
-
-        this.shadowRoot.innerHTML = `
-            <style>
-                .editor-container {
-                    display: flex;
-                    flex-direction: column;
-                    height: 100%;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    overflow: hidden;
-                }
-                .cm-toolbar {
-                    width: 100%;
-                    padding: 4px;
-                    background: #f8f9fa;
-                    border-bottom: 1px solid #ccc;
-                    display: flex;
-                    align-items: center;
-                }
-                .cm-toolbar-input {
-                    flex: 1;
-                    border: none;
-                    background: transparent;
-                    font-size: 14px;
-                    outline: none;
-                    padding: 4px;
-                }
-                .editor {
-                    flex: 1;
-                }
-            </style>
-            <div class="editor-container">
-                <div class="editor"></div>
-            </div>
-        `;
-
-        const editorContainer = this.shadowRoot.querySelector(".editor") as HTMLDivElement;
-
-        this.editorView = createCodeblock(editorContainer, this.fs!, this.path!);
-    }
-
-    disconnectedCallback() {
-        this.editorView?.destroy();
-    }
-}
-
-customElements.define("code-editor", CodeEditor);
+const editorView = createCodeblock(editorContainer, window.fs, 'example.txt');
