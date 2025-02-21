@@ -4,6 +4,7 @@ import { ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
 import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
+import { getLanguageSupportForFile } from "./language";
 
 declare global {
     interface Window {
@@ -12,7 +13,21 @@ declare global {
 }
 
 (window as any).fs = {
-    readFile: async (path) => "// Initial file content",
+    readFile: async (path) => `
+export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
+    const state = EditorState.create({
+        extensions: [
+            basicSetup,
+            codeblock({ fs, path, toolbar }),
+            vscodeDark,
+            // vscodeLight,
+            codeblockTheme
+        ]
+    });
+    return new EditorView({ state, parent });
+}
+    `
+    ,
     writeFile: async (path, content) => console.log("Saving:", path, content),
     watch: (path, options) => {
         return {
@@ -96,6 +111,7 @@ const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
     combine: (values) => values[0]
 });
 const compartment = new Compartment();
+const languageCompartment = new Compartment();
 
 const codeblock = ({ fs, path, toolbar }: CodeblockConfig) => {
     return [
@@ -144,9 +160,15 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
         input.className = "cm-toolbar-input";
         toolbarElement.appendChild(input);
         view.dom.prepend(toolbarElement);
-        input.addEventListener("input", (event) => {
+        input.addEventListener("input", async (event) => {
             path = (event.target as HTMLInputElement).value;
-            view.dispatch({ effects: compartment.reconfigure(CodeblockFacet.of({ fs, path, toolbar })) });
+            const language = await getLanguageSupportForFile(path);
+            view.dispatch({
+                effects: [
+                    compartment.reconfigure(CodeblockFacet.of({ fs, path, toolbar })),
+                    languageCompartment.reconfigure(language || [])
+                ]
+            });
         });
     }
 
@@ -162,12 +184,15 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
     };
 });
 
-export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
+export async function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
+    const language = await getLanguageSupportForFile(path);
     const state = EditorState.create({
         extensions: [
             basicSetup,
             codeblock({ fs, path, toolbar }),
+            languageCompartment.of(language || []),
             vscodeDark,
+            // vscodeLight,
             codeblockTheme
         ]
     });
@@ -175,5 +200,4 @@ export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolb
 }
 
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
-
-const editorView = createCodeblock(editorContainer, window.fs, 'example.txt');
+const editorView = createCodeblock(editorContainer, window.fs, 'example.ts');
