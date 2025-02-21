@@ -1,10 +1,13 @@
 import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, Facet } from "@codemirror/state";
-import { ViewPlugin, ViewUpdate } from "@codemirror/view";
+import { ViewPlugin, ViewUpdate, keymap, KeyBinding } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
 import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
 import { getLanguageSupportForFile } from "./language";
+import { indentWithTab } from "@codemirror/commands";
+import { detectIndentationUnit } from "./utils";
+import { indentUnit } from "@codemirror/language";
 
 declare global {
     interface Window {
@@ -13,8 +16,7 @@ declare global {
 }
 
 (window as any).fs = {
-    readFile: async (path) => `
-export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
+    readFile: async (path) => `export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
     const state = EditorState.create({
         extensions: [
             basicSetup,
@@ -113,10 +115,27 @@ const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
 const compartment = new Compartment();
 const languageCompartment = new Compartment();
 
+const navigationKeymap: KeyBinding[] = [{
+    key: "ArrowUp",
+    run: (view: EditorView) => {
+        const cursor = view.state.selection.main;
+        const line = view.state.doc.lineAt(cursor.head);
+        const toolbarInput = view.dom.querySelector<HTMLElement>('.cm-toolbar-input')
+
+        // Only handle up arrow if we're on the first line
+        if (line.number === 1 && toolbarInput) {
+            toolbarInput.focus();
+            return true;
+        }
+        return false;
+    }
+}];
+
 const codeblock = ({ fs, path, toolbar }: CodeblockConfig) => {
     return [
         compartment.of(CodeblockFacet.of({ fs, path, toolbar })),
-        CodeblockViewPlugin
+        CodeblockViewPlugin,
+        keymap.of(navigationKeymap)
     ]
 }
 
@@ -151,16 +170,22 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
     })();
 
     let toolbarElement: HTMLElement | null = null;
+    let toolbarInput: HTMLInputElement | null = null;
+
+    // TODO: replace toolbar with a CodeMirror Panel: https://codemirror.net/examples/panel/
+
     if (toolbar) {
         toolbarElement = document.createElement("div");
         toolbarElement.className = "cm-toolbar";
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = path;
-        input.className = "cm-toolbar-input";
-        toolbarElement.appendChild(input);
+        toolbarInput = document.createElement("input");
+        toolbarInput.type = "text";
+        toolbarInput.value = path;
+        toolbarInput.className = "cm-toolbar-input";
+        toolbarElement.appendChild(toolbarInput);
         view.dom.prepend(toolbarElement);
-        input.addEventListener("input", async (event) => {
+
+        // Handle filename input events
+        toolbarInput.addEventListener("input", async (event) => {
             path = (event.target as HTMLInputElement).value;
             const language = await getLanguageSupportForFile(path);
             view.dispatch({
@@ -169,6 +194,19 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
                     languageCompartment.reconfigure(language || [])
                 ]
             });
+        });
+
+        // Add down arrow handler for filename input
+        toolbarInput.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowDown") {
+                event.preventDefault();
+                view.focus();
+                view.dispatch({
+                    selection: { anchor: 0, head: 0 }
+                });
+                // Not entirely sure why this is necessary, presumably because we didn't use a Panel
+                view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+            }
         });
     }
 
@@ -186,13 +224,18 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
 
 export async function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
     const language = await getLanguageSupportForFile(path);
+    const file = await fs.readFile(path);
+    const unit = detectIndentationUnit(file) || '    ';
     const state = EditorState.create({
+        doc: '',
         extensions: [
             basicSetup,
             codeblock({ fs, path, toolbar }),
             languageCompartment.of(language || []),
             vscodeDark,
+            indentUnit.of(unit),
             // vscodeLight,
+            keymap.of([indentWithTab]),
             codeblockTheme
         ]
     });
