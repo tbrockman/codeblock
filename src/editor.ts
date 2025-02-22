@@ -1,6 +1,6 @@
 import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, Facet } from "@codemirror/state";
-import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel } from "@codemirror/view";
+import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel, gutter } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
 import { vscodeDark, } from '@uiw/codemirror-theme-vscode';
@@ -251,7 +251,7 @@ export async function createCodeblock(parent: HTMLElement, fs: FS, path: string,
             vscodeDark,
             indentUnit.of(unit),
             keymap.of([indentWithTab]),
-            codeblockTheme
+            codeblockTheme,
         ]
     });
 
