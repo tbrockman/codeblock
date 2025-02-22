@@ -1,9 +1,9 @@
 import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, Facet } from "@codemirror/state";
-import { ViewPlugin, ViewUpdate, keymap, KeyBinding } from "@codemirror/view";
+import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
-import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
+import { vscodeDark, } from '@uiw/codemirror-theme-vscode';
 import { getLanguageSupportForFile } from "./language";
 import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
@@ -115,14 +115,71 @@ const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
 const compartment = new Compartment();
 const languageCompartment = new Compartment();
 
+// Create a custom panel for the toolbar
+function toolbarPanel(view: EditorView): Panel {
+    let { path } = view.state.facet(CodeblockFacet);
+    const dom = document.createElement("div");
+    dom.className = "cm-toolbar-panel";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = path;
+    input.className = "cm-toolbar-input";
+
+    // Handle input changes
+    input.addEventListener("input", async (event) => {
+        const newPath = (event.target as HTMLInputElement).value;
+        // Update the path in the facet immediately
+        view.dispatch({
+            effects: compartment.reconfigure(CodeblockFacet.of({
+                ...view.state.facet(CodeblockFacet),
+                path: newPath
+            }))
+        })
+        // Update the language support for the new path
+        const language = await getLanguageSupportForFile(newPath);
+        view.dispatch({
+            effects: languageCompartment.reconfigure(language || [])
+        });
+    });
+
+    // Handle moving down from input to editor
+    input.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            view.focus();
+            view.dispatch({
+                selection: { anchor: 0, head: 0 }
+            });
+            // this is required for some reason?
+            view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+        }
+    });
+
+    dom.appendChild(input);
+    return {
+        dom,
+        top: true,
+        mount() {
+            // Optional: Add any initialization logic here
+        },
+        update() {
+            // Update input value if path changes
+            ({ path } = view.state.facet(CodeblockFacet));
+            if (input.value !== path) {
+                input.value = path;
+            }
+        }
+    };
+}
+
 const navigationKeymap: KeyBinding[] = [{
     key: "ArrowUp",
     run: (view: EditorView) => {
         const cursor = view.state.selection.main;
         const line = view.state.doc.lineAt(cursor.head);
-        const toolbarInput = view.dom.querySelector<HTMLElement>('.cm-toolbar-input')
+        const toolbarInput = view.dom.querySelector<HTMLElement>('.cm-toolbar-input');
 
-        // Only handle up arrow if we're on the first line
         if (line.number === 1 && toolbarInput) {
             toolbarInput.focus();
             return true;
@@ -134,13 +191,14 @@ const navigationKeymap: KeyBinding[] = [{
 const codeblock = ({ fs, path, toolbar }: CodeblockConfig) => {
     return [
         compartment.of(CodeblockFacet.of({ fs, path, toolbar })),
+        toolbar ? showPanel.of(toolbarPanel) : [],
         CodeblockViewPlugin,
         keymap.of(navigationKeymap)
-    ]
-}
+    ];
+};
 
 const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
-    let { fs, path, toolbar } = view.state.facet(CodeblockFacet);
+    let { fs, path } = view.state.facet(CodeblockFacet);
     let { signal, abort } = new AbortController();
     let updatingFromFS = false;
 
@@ -169,55 +227,13 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
         }
     })();
 
-    let toolbarElement: HTMLElement | null = null;
-    let toolbarInput: HTMLInputElement | null = null;
-
-    // TODO: replace toolbar with a CodeMirror Panel: https://codemirror.net/examples/panel/
-
-    if (toolbar) {
-        toolbarElement = document.createElement("div");
-        toolbarElement.className = "cm-toolbar";
-        toolbarInput = document.createElement("input");
-        toolbarInput.type = "text";
-        toolbarInput.value = path;
-        toolbarInput.className = "cm-toolbar-input";
-        toolbarElement.appendChild(toolbarInput);
-        view.dom.prepend(toolbarElement);
-
-        // Handle filename input events
-        toolbarInput.addEventListener("input", async (event) => {
-            path = (event.target as HTMLInputElement).value;
-            const language = await getLanguageSupportForFile(path);
-            view.dispatch({
-                effects: [
-                    compartment.reconfigure(CodeblockFacet.of({ fs, path, toolbar })),
-                    languageCompartment.reconfigure(language || [])
-                ]
-            });
-        });
-
-        // Add down arrow handler for filename input
-        toolbarInput.addEventListener("keydown", (event) => {
-            if (event.key === "ArrowDown") {
-                event.preventDefault();
-                view.focus();
-                view.dispatch({
-                    selection: { anchor: 0, head: 0 }
-                });
-                // Not entirely sure why this is necessary, presumably because we didn't use a Panel
-                view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
-            }
-        });
-    }
-
     return {
         update(update: ViewUpdate) {
-            ({ fs, path, toolbar } = update.state.facet(CodeblockFacet));
+            ({ fs, path } = update.state.facet(CodeblockFacet));
             if (update.docChanged) save();
         },
         destroy() {
             abort();
-            toolbarElement?.remove();
         }
     };
 });
@@ -234,13 +250,10 @@ export async function createCodeblock(parent: HTMLElement, fs: FS, path: string,
             languageCompartment.of(language || []),
             vscodeDark,
             indentUnit.of(unit),
-            // vscodeLight,
             keymap.of([indentWithTab]),
             codeblockTheme
         ]
     });
+
     return new EditorView({ state, parent });
 }
-
-const editorContainer = document.getElementById('editor') as HTMLDivElement;
-const editorView = createCodeblock(editorContainer, window.fs, 'example.ts');

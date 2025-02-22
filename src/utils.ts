@@ -1,56 +1,45 @@
-export const detectIndentationUnit = (content: string): string | null => {
-    // Skip empty lines or lines with only whitespace
-    const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
+export const detectIndentationUnit = (content: string, limit: number = 1024): string | null => {
+    const lines = content.split(/\r?\n/, limit).filter(line => line.trim().length > 0);
     const indentCounts: Record<string, number> = {};
-    const spaceIndents = new Set<number>();
+    let indentation = new Set<string>();
+    let tabLineCount = 0;
+    let spaceLineCount = 0;
+    let unit = '\t';
 
     for (const line of lines) {
         const match = line.match(/^(\s+)/);
         if (!match) continue;
 
         const indent = match[0];
+        const isTab = indent.includes('\t');
 
-        // Handle tabs
-        if (indent.includes('\t')) {
-            indentCounts['\t'] = (indentCounts['\t'] || 0) + 1;
-            continue;
+        if (isTab) {
+            tabLineCount++;
+        } else {
+            spaceLineCount++;
         }
 
-        // Handle spaces
-        const spaceCount = indent.length;
-        spaceIndents.add(spaceCount);
+        indentation.add(indent);
         indentCounts[indent] = (indentCounts[indent] || 0) + 1;
     }
 
-    // If no indentation found
     if (Object.keys(indentCounts).length === 0) {
         return null;
     }
 
-    // Find the most common indentation
-    const sortedEntries = Object.entries(indentCounts)
-        .sort((a, b) => b[1] - a[1]);
+    unit = tabLineCount > spaceLineCount ? '\t' : ' ';
 
-    const mostCommon = sortedEntries[0][0];
+    const counts = Array.from(indentation)
+        .filter(indent => indent.startsWith(unit))
+        .map(indent => indent.length);
 
-    // If tabs are used and they're frequent enough (>25% of indented lines)
-    if (indentCounts['\t'] && indentCounts['\t'] / lines.length >= 0.25) {
-        return '\t';
+    if (counts.length > 0) {
+        const gcd = (...numbers: number[]): number => {
+            return numbers.reduce((a, b) => (b === 0 ? a : gcd(b, a % b)));
+        };
+        const commonUnit = gcd(...counts);
+        return unit.repeat(commonUnit);
     }
 
-    // For spaces, find the minimum common indentation unit
-    if (!mostCommon.includes('\t')) {
-        const spaceIndentLengths = Array.from(spaceIndents).sort((a, b) => a - b);
-        if (spaceIndentLengths.length > 0) {
-            // Find the GCD of all space indentations
-            const gcd = (...numbers: number[]): number => {
-                return numbers.reduce((a, b) => b === 0 ? a : gcd(b, a % b));
-            };
-
-            const commonUnit = gcd(...spaceIndentLengths);
-            return ' '.repeat(commonUnit);
-        }
-    }
-
-    return mostCommon;
+    return null;
 };
