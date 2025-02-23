@@ -9,6 +9,10 @@ import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { indentUnit } from "@codemirror/language";
 import { FS } from "./fs";
+import { createDefaultMapFromCDN, createSystem, createVirtualCompilerHost } from '@typescript/vfs';
+import ts from "typescript"
+import lzstring from "lz-string"
+
 
 type CodeblockConfig = { fs: FS; path: string; toolbar: boolean };
 const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
@@ -160,7 +164,23 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
 
 export async function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
     const language = await getLanguageSupportForFile(path);
+    const compilerOptions = ts.getDefaultCompilerOptions()
+    const fileMap = await createDefaultMapFromCDN(compilerOptions, '5.7.3', true, ts, lzstring);
     const doc = await fs.readFile(path);
+    fileMap.set('example.ts', '')
+    const system = createSystem(fileMap)
+    const host = createVirtualCompilerHost(system, compilerOptions, ts)
+
+    const program = ts.createProgram({
+        rootNames: [...fileMap.keys()],
+        options: compilerOptions,
+        host: host.compilerHost,
+    })
+
+    // This will update the fsMap with new files
+    // for the .d.ts and .js files
+    program.emit()
+
     const unit = detectIndentationUnit(doc) || '    ';
     const state = EditorState.create({
         doc,

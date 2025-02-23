@@ -10,7 +10,7 @@ export const codeblockTheme = EditorView.theme({
         outline: 'none',
         fontSize: '16px',
         color: 'white',
-        padding: '0 0 0 14px'
+        padding: '0 0 0 15px'
     },
     '.cm-toolbar-panel': {
         padding: '0',
