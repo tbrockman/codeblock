@@ -1,0 +1,33 @@
+diff --git a/dist/vfs/watchers.js b/dist/vfs/watchers.js
+index 9965a93fcc6bdc37e22bc7f90398067c56f6a769..f5569875971da8cab71337fa1a3b2c0dd7845f3a 100644
+--- a/dist/vfs/watchers.js
++++ b/dist/vfs/watchers.js
+@@ -20,10 +20,10 @@ class Watcher extends EventEmitter {
+     }
+     /* eslint-enable @typescript-eslint/no-explicit-any */
+     constructor(
+-    /**
+-     * @internal
+-     */
+-    _context, path) {
++        /**
++         * @internal
++         */
++        _context, path) {
+         super();
+         this._context = _context;
+         this.path = path;
+@@ -143,6 +143,13 @@ export function emitChange(context, eventType, filename) {
+     if (context)
+         filename = join((_a = context.root) !== null && _a !== void 0 ? _a : '/', filename);
+     filename = normalizePath(filename);
++    const watcherSet = watchers.get(filename);
++
++    if (watcherSet) {
++        for (const watcher of watcherSet) {
++            watcher.emit('change', eventType, filename);
++        }
++    }
+     // Notify watchers on parent directories if they are watching recursively
+     let parent = filename, normalizedFilename;
+     while (normalizedFilename != '/') {

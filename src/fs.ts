@@ -1,4 +1,3 @@
-
 export interface FS {
     /**
      * Reads the entire contents of a file asynchronously

@@ -101,46 +101,59 @@ const codeblock = ({ fs, path, toolbar }: CodeblockConfig) => {
 
 const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
     let { fs, path } = view.state.facet(CodeblockFacet);
-    let { signal, abort } = new AbortController();
-    let updatingFromFS = false;
+    let abortController = new AbortController();
 
     const save = debounce(async () => {
-        if (updatingFromFS) return;
-        console.log('save called', path, updatingFromFS, view.state.doc.toString())
+        console.log('save called', path, view.state.doc.toString());
         await fs.writeFile(path, view.state.doc.toString()).catch(console.error);
         const diskFile = await fs.readFile(path);
-        console.log('disk file', diskFile)
+        console.log('disk file', diskFile);
     }, 500);
 
-    (async () => {
-        try {
-            for await (const e of fs.watch('/' + path, { signal })) {
-                console.log('file changed', e)
-                updatingFromFS = true;
-                try {
-                    const content = await fs.readFile(path);
-                    if (content === view.state.doc.toString()) return;
-                    view.dispatch({
-                        changes: { from: 0, to: view.state.doc.length, insert: content },
-                    });
-                } catch (err) {
-                    console.error("Failed to sync file changes", err);
+    const startWatching = () => {
+        abortController.abort(); // Cancel any existing watcher
+        abortController = new AbortController();
+        const { signal } = abortController;
+
+        (async () => {
+            try {
+                for await (const _ of fs.watch(path, { signal })) {
+                    try {
+                        const content = await fs.readFile(path);
+                        const doc = view.state.doc.toString();
+                        console.log('watch event', { content, doc, equal: content === doc });
+
+                        if (content === view.state.doc.toString()) continue;
+                        view.dispatch({
+                            changes: { from: 0, to: view.state.doc.length, insert: content },
+                        });
+                    } catch (err: any) {
+                        if (err.toString().indexOf('No data available') > -1) {
+                            continue;
+                        }
+                        console.error("Failed to sync file changes", err);
+                    }
                 }
-                updatingFromFS = false;
+            } catch (err: any) {
+                if (err.name === 'AbortError') return;
+                throw err;
             }
-        } catch (err: any) {
-            if (err.name === 'AbortError') return;
-            throw err;
-        }
-    })();
+        })();
+    };
+
+    startWatching();
 
     return {
         update(update: ViewUpdate) {
+            const oldPath = path;
             ({ fs, path } = update.state.facet(CodeblockFacet));
+
             if (update.docChanged) save();
+            if (oldPath !== path) startWatching(); // Restart watcher if path changed
         },
         destroy() {
-            abort();
+            console.log('destroyed???');
+            abortController.abort(); // Properly stop the watcher
         }
     };
 });

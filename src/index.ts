@@ -1,4 +1,4 @@
-import { configure, configureSingle, promises as fs } from "@zenfs/core";
+import { configureSingle, promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { WebAccess } from "@zenfs/dom";
 import { FS } from "./fs";
@@ -12,14 +12,11 @@ const fsImpl: FS = {
         return fs.readFile(path, { encoding: 'utf-8' });
     },
     async writeFile(path: string, data: string) {
-        debugger;
         console.log('writing file', path, data)
         return fs.writeFile(path, data);
     },
-    // issue here is that for whatever reason fs.watch only watches dirs UH DUHHHHHHH
     async *watch(path: string, options: { signal: AbortSignal }) {
         for await (const e of fs.watch(path, { signal: options.signal, encoding: 'utf-8', recursive: true })) {
-            console.log('watch caled', e)
             yield e as { eventType: 'rename' | 'change', filename: string };
         }
     },

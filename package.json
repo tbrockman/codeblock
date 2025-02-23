@@ -27,5 +27,10 @@
     "@zenfs/dom": "^1.1.5",
     "codemirror": "^6.0.1",
     "lodash": "^4.17.21"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@zenfs/core@1.11.2": "patches/@zenfs__core@1.11.2.patch"
+    }
   }
 }
