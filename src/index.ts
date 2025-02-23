@@ -1,33 +1,36 @@
-import { configure, configureSingle, fs } from "@zenfs/core";
+import { configure, configureSingle, promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { WebAccess } from "@zenfs/dom";
+import { FS } from "./fs";
 
 await configureSingle({ backend: WebAccess, handle: await navigator.storage.getDirectory() })
 
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
 
-const fsImpl = {
+const fsImpl: FS = {
     async readFile(path: string) {
-        return new Promise<string>((resolve, reject) => {
-            fs.readFile(path, (err, data) => {
-                if (err) reject(err);
-                else resolve(data?.toString() || '');
-            });
-        })
+        return fs.readFile(path, { encoding: 'utf-8' });
     },
     async writeFile(path: string, data: string) {
+        debugger;
+        console.log('writing file', path, data)
         return fs.writeFile(path, data);
     },
-    watch(path: string) {
-        return fs.watch(path);
+    // issue here is that for whatever reason fs.watch only watches dirs UH DUHHHHHHH
+    async *watch(path: string, options: { signal: AbortSignal }) {
+        for await (const e of fs.watch(path, { signal: options.signal, encoding: 'utf-8', recursive: true })) {
+            console.log('watch caled', e)
+            yield e as { eventType: 'rename' | 'change', filename: string };
+        }
     },
-    mkdir(path: string) {
-        return fs.mkdir(path);
+    async mkdir(path: string, options: { recursive: boolean }) {
+        await fs.mkdir(path, options);
     },
-    exists(path: string) {
+    async exists(path: string) {
         return fs.exists(path);
     }
-}
+};
 
-fs.writeFile('example.ts', 'console.log("Hello World!")');
+const file = await fs.readFile('example.ts', 'utf-8');
+console.log('have file', file)
 const editorView = createCodeblock(editorContainer, fsImpl, 'example.ts');

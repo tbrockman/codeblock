@@ -1,6 +1,6 @@
 import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, Facet } from "@codemirror/state";
-import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel, gutter } from "@codemirror/view";
+import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
 import { vscodeDark, } from '@uiw/codemirror-theme-vscode';
@@ -8,105 +8,7 @@ import { getLanguageSupportForFile } from "./language";
 import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { indentUnit } from "@codemirror/language";
-
-declare global {
-    interface Window {
-        fs: FS;
-    }
-}
-
-(window as any).fs = {
-    readFile: async (path) => `export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
-    const state = EditorState.create({
-        extensions: [
-            basicSetup,
-            codeblock({ fs, path, toolbar }),
-            vscodeDark,
-            // vscodeLight,
-            codeblockTheme
-        ]
-    });
-    return new EditorView({ state, parent });
-}
-    `
-    ,
-    writeFile: async (path, content) => console.log("Saving:", path, content),
-    watch: (path, options) => {
-        return {
-            [Symbol.asyncIterator]() {
-                let firstCall = true;
-                return {
-                    async next() {
-                        if (firstCall) {
-                            firstCall = false;
-                            return {
-                                done: false,
-                                value: { eventType: 'change', filename: 'test.txt' }
-                            };
-                        }
-                        // Block forever after first element
-                        return new Promise(() => { });
-                    }
-                };
-            }
-        };
-    },
-    mkdir: (path: string, options: { recursive: boolean }) => Promise.resolve(),
-    exists: (path: string) => Promise.resolve(true),
-} as FS;
-
-interface FS {
-    /**
-     * Reads the entire contents of a file asynchronously
-     * @param path A path to a file
-     */
-    readFile: (
-        path: string,
-    ) => Promise<string>;
-
-    /**
-     * Writes data to a file asynchronously
-     * @param path A path to a file
-     * @param data The data to write
-     */
-    writeFile: (
-        path: string,
-        data: string,
-    ) => Promise<void>;
-
-    /**
-     * Watch for changes to a file or directory
-     * @param path A path to a file/directory
-     * @param options Configuration options for watching
-     */
-    watch: (
-        path: string,
-        options: {
-            signal: AbortSignal,
-        }
-    ) => AsyncIterable<{ eventType: 'rename' | 'change', filename: string }>;
-
-    /**
-     * Creates a directory asynchronously
-     * @param path A path to a directory, URL, or parent FileSystemDirectoryHandle
-     * @param options Configuration options for directory creation
-     */
-    mkdir: (
-        path: string,
-        options: {
-            recursive: boolean,
-        }
-    ) => Promise<void>;
-
-    /**
-     * Checks whether a given file or folder exists
-     * @param path A path to a file or folder
-     * @returns A promise that resolves to true if the file or folder exists, false otherwise
-     */
-    exists: (
-        path: string,
-    ) => Promise<boolean>;
-}
+import { FS } from "./fs";
 
 type CodeblockConfig = { fs: FS; path: string; toolbar: boolean };
 const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
@@ -204,15 +106,20 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
 
     const save = debounce(async () => {
         if (updatingFromFS) return;
+        console.log('save called', path, updatingFromFS, view.state.doc.toString())
         await fs.writeFile(path, view.state.doc.toString()).catch(console.error);
+        const diskFile = await fs.readFile(path);
+        console.log('disk file', diskFile)
     }, 500);
 
     (async () => {
         try {
-            for await (const _ of fs.watch(path, { signal })) {
+            for await (const e of fs.watch('/' + path, { signal })) {
+                console.log('file changed', e)
                 updatingFromFS = true;
                 try {
                     const content = await fs.readFile(path);
+                    if (content === view.state.doc.toString()) return;
                     view.dispatch({
                         changes: { from: 0, to: view.state.doc.length, insert: content },
                     });
@@ -240,10 +147,10 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
 
 export async function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
     const language = await getLanguageSupportForFile(path);
-    const file = await fs.readFile(path);
-    const unit = detectIndentationUnit(file) || '    ';
+    const doc = await fs.readFile(path);
+    const unit = detectIndentationUnit(doc) || '    ';
     const state = EditorState.create({
-        doc: '',
+        doc,
         extensions: [
             basicSetup,
             codeblock({ fs, path, toolbar }),
