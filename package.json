@@ -30,11 +30,7 @@
     "codemirror": "^6.0.1",
     "lodash": "^4.17.21",
     "lz-string": "^1.5.0",
-    "comlink": "^4.4.2"
-  },
-  "pnpm": {
-    "patchedDependencies": {
-      "@zenfs/core@1.11.2": "patches/@zenfs__core@1.11.2.patch"
-    }
+    "comlink": "^4.4.2",
+    "@open-rpc/client-js": "^1.8.1"
   }
 }

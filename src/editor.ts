@@ -9,7 +9,8 @@ import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { indentUnit } from "@codemirror/language";
 import { FS } from "./fs";
-import { createDefaultMapFromCDN, createSystem, createVirtualCompilerHost, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
+import { createDefaultMapFromCDN, createSystem, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
+// TODO: lazily import ts, it's like a 10mb dep
 import ts, { createLanguageService } from "typescript"
 import lzstring from "lz-string"
 
