@@ -9,8 +9,8 @@ import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { indentUnit } from "@codemirror/language";
 import { FS } from "./fs";
-import { createDefaultMapFromCDN, createSystem, createVirtualCompilerHost } from '@typescript/vfs';
-import ts from "typescript"
+import { createDefaultMapFromCDN, createSystem, createVirtualCompilerHost, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
+import ts, { createLanguageService } from "typescript"
 import lzstring from "lz-string"
 
 
@@ -167,19 +167,11 @@ export async function createCodeblock(parent: HTMLElement, fs: FS, path: string,
     const compilerOptions = ts.getDefaultCompilerOptions()
     const fileMap = await createDefaultMapFromCDN(compilerOptions, '5.7.3', true, ts, lzstring);
     const doc = await fs.readFile(path);
-    fileMap.set('example.ts', '')
+    fileMap.set('example.ts', doc)
+    console.log(fileMap)
     const system = createSystem(fileMap)
-    const host = createVirtualCompilerHost(system, compilerOptions, ts)
-
-    const program = ts.createProgram({
-        rootNames: [...fileMap.keys()],
-        options: compilerOptions,
-        host: host.compilerHost,
-    })
-
-    // This will update the fsMap with new files
-    // for the .d.ts and .js files
-    program.emit()
+    const env = createVirtualTypeScriptEnvironment(system, ['example.ts'], ts, compilerOptions)
+    console.log(env.languageService)
 
     const unit = detectIndentationUnit(doc) || '    ';
     const state = EditorState.create({
