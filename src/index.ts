@@ -1,33 +1,35 @@
-import { configureSingle, promises as fs } from "@zenfs/core";
+import type { promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
-import { WebAccess } from "@zenfs/dom";
 import { FS } from "./fs";
+import * as Comlink from 'comlink';
+import { asyncGeneratorTransferHandler } from './utils'
 
-await configureSingle({ backend: WebAccess, handle: await navigator.storage.getDirectory() })
+Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
+
+const fsWorker = new SharedWorker(new URL('./workers/fs.ts', import.meta.url), { type: 'module' });
+const fsInterface = Comlink.wrap<typeof fs>(fsWorker.port);
+
 
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
 
 const fsImpl: FS = {
     async readFile(path: string) {
-        return fs.readFile(path, { encoding: 'utf-8' });
+        return fsInterface.readFile(path, { encoding: 'utf-8' }) as Promise<string>;
     },
     async writeFile(path: string, data: string) {
-        console.log('writing file', path, data)
-        return fs.writeFile(path, data);
+        return fsInterface.writeFile(path, data, { encoding: 'utf-8' });
     },
-    async *watch(path: string, options: { signal: AbortSignal }) {
-        for await (const e of fs.watch(path, { signal: options.signal, encoding: 'utf-8', recursive: true })) {
+    async *watch(path: string, { signal }) {
+        for await (const e of await fsInterface.watch(path, { encoding: 'utf-8', recursive: true })) {
             yield e as { eventType: 'rename' | 'change', filename: string };
         }
     },
     async mkdir(path: string, options: { recursive: boolean }) {
-        await fs.mkdir(path, options);
+        await fsInterface.mkdir(path, options);
     },
     async exists(path: string) {
-        return fs.exists(path);
+        return fsInterface.exists(path);
     }
 };
 
-const file = await fs.readFile('example.ts', 'utf-8');
-console.log('have file', file)
-const editorView = createCodeblock(editorContainer, fsImpl, 'example.ts');
+createCodeblock(editorContainer, fsImpl, 'example.ts');

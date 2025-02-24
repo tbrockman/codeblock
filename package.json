@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@types/lodash": "^4.17.15",
+    "@types/sharedworker": "^0.0.150",
     "vite": "^6.1.0"
   },
   "dependencies": {
@@ -28,7 +29,8 @@
     "@zenfs/dom": "^1.1.5",
     "codemirror": "^6.0.1",
     "lodash": "^4.17.21",
-    "lz-string": "^1.5.0"
+    "lz-string": "^1.5.0",
+    "comlink": "^4.4.2"
   },
   "pnpm": {
     "patchedDependencies": {
