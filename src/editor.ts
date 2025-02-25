@@ -1,26 +1,30 @@
 import { EditorView, basicSetup } from "codemirror";
-import { Compartment, EditorState, Facet } from "@codemirror/state";
+import { Compartment, EditorState, Facet, StateEffect, StateField } from "@codemirror/state";
 import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
-import { vscodeDark, } from '@uiw/codemirror-theme-vscode';
+import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { getLanguageSupportForFile } from "./language";
 import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
-import { indentUnit } from "@codemirror/language";
+import { indentString, indentUnit } from "@codemirror/language";
 import { FS } from "./fs";
 import { createDefaultMapFromCDN, createSystem, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
-// TODO: lazily import ts, it's like a 10mb dep
-import ts, { createLanguageService } from "typescript"
-import lzstring from "lz-string"
+import ts from "typescript";
+import lzstring from "lz-string";
 
-
+// Configuration types and facets
 type CodeblockConfig = { fs: FS; path: string; toolbar: boolean };
+
 const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
     combine: (values) => values[0]
 });
-const compartment = new Compartment();
+
+// Compartments for dynamically reconfiguring extensions
+const configCompartment = new Compartment();
 const languageCompartment = new Compartment();
+const indentationCompartment = new Compartment();
+const tsEnvironmentCompartment = new Compartment();
 
 // Create a custom panel for the toolbar
 function toolbarPanel(view: EditorView): Panel {
@@ -34,19 +38,14 @@ function toolbarPanel(view: EditorView): Panel {
     input.className = "cm-toolbar-input";
 
     // Handle input changes
-    input.addEventListener("input", async (event) => {
+    input.addEventListener("input", (event) => {
         const newPath = (event.target as HTMLInputElement).value;
-        // Update the path in the facet immediately
+        // Update the path in the facet
         view.dispatch({
-            effects: compartment.reconfigure(CodeblockFacet.of({
+            effects: configCompartment.reconfigure(CodeblockFacet.of({
                 ...view.state.facet(CodeblockFacet),
                 path: newPath
             }))
-        })
-        // Update the language support for the new path
-        const language = await getLanguageSupportForFile(newPath);
-        view.dispatch({
-            effects: languageCompartment.reconfigure(language || [])
         });
     });
 
@@ -58,7 +57,6 @@ function toolbarPanel(view: EditorView): Panel {
             view.dispatch({
                 selection: { anchor: 0, head: 0 }
             });
-            // this is required for some reason?
             view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
         }
     });
@@ -95,19 +93,28 @@ const navigationKeymap: KeyBinding[] = [{
     }
 }];
 
-const codeblock = ({ fs, path, toolbar }: CodeblockConfig) => {
+// Main codeblock plugin creation function
+const codeblock = (initialConfig: CodeblockConfig) => {
     return [
-        compartment.of(CodeblockFacet.of({ fs, path, toolbar })),
-        toolbar ? showPanel.of(toolbarPanel) : [],
-        CodeblockViewPlugin,
-        keymap.of(navigationKeymap)
+        configCompartment.of(CodeblockFacet.of(initialConfig)),
+        languageCompartment.of([]),
+        indentationCompartment.of(indentUnit.of("    ")),
+        tsEnvironmentCompartment.of([]),
+        showPanel.of(initialConfig.toolbar ? toolbarPanel : null),
+        codeblockTheme,
+        codeblockView,
+        keymap.of(navigationKeymap),
+        keymap.of([indentWithTab]),
+        vscodeDark
     ];
 };
-
-const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
+// The main view plugin that handles reactive updates and file syncing
+const codeblockView = ViewPlugin.define((view: EditorView) => {
     let { fs, path } = view.state.facet(CodeblockFacet);
     let abortController = new AbortController();
+    let initialized = false;
 
+    // Save file changes to disk
     const save = debounce(async () => {
         console.log('save called', path, view.state.doc.toString());
         await fs.writeFile(path, view.state.doc.toString()).catch(console.error);
@@ -115,10 +122,12 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
         console.log('disk file', diskFile);
     }, 500);
 
+    // Function to setup file watching
     const startWatching = () => {
         abortController.abort(); // Cancel any existing watcher
         abortController = new AbortController();
         const { signal } = abortController;
+        console.log('watching???');
 
         (async () => {
             try {
@@ -146,45 +155,145 @@ const CodeblockViewPlugin = ViewPlugin.define((view: EditorView) => {
         })();
     };
 
-    startWatching();
+    // Get language support based on file path
+    const getLanguageSupport = async (filePath: string) => {
+        try {
+            return await getLanguageSupportForFile(filePath);
+        } catch (error) {
+            console.error("Failed to get language support:", error);
+            return null;
+        }
+    };
+
+    // Detect indentation based on file content
+    const getIndentationUnit = (content: string) => {
+        return detectIndentationUnit(content) || '    ';
+    };
+
+    // Create TypeScript environment
+    const createTSEnvironment = async (filePath: string, content: string) => {
+        try {
+            const compilerOptions = ts.getDefaultCompilerOptions();
+            const fileMap = await createDefaultMapFromCDN(compilerOptions, '5.7.3', true, ts, lzstring);
+
+            // Use the actual file path as the key in the file map
+            const fileName = filePath.split('/').pop() || 'example.ts';
+            fileMap.set(fileName, content);
+
+            const system = createSystem(fileMap);
+            return createVirtualTypeScriptEnvironment(system, [fileName], ts, compilerOptions);
+        } catch (error) {
+            console.error("Failed to create TypeScript environment:", error);
+            return null;
+        }
+    };
+
+    // Initial setup - with composed transactions
+    setTimeout(async () => {
+        if (initialized) return;
+        initialized = true;
+        console.log('initializing');
+
+        try {
+            // Step 1: Read the file content
+            const content = await fs.readFile(path);
+            console.log('read file content', content);
+
+            // Step 2: Get all the necessary extensions and effects in parallel
+            const [languageSupport] = await Promise.all([
+                getLanguageSupport(path),
+                createTSEnvironment(path, content)
+            ]);
+
+            const unit = getIndentationUnit(content);
+
+            // Step 3: Compose all changes into a single transaction
+            view.dispatch({
+                changes: { from: 0, to: view.state.doc.length, insert: content },
+                effects: [
+                    // Language support
+                    languageCompartment.reconfigure(languageSupport || []),
+                    // Indentation
+                    indentationCompartment.reconfigure(indentUnit.of(unit)),
+                ].filter(Boolean) // Filter out null effects
+            });
+
+            console.log('applied all initial settings');
+
+            // Start watching for file changes after the state is set up
+            startWatching();
+            console.log('after watch call');
+        } catch (error) {
+            console.error("Failed to initialize codeblock:", error);
+        }
+    }, 0);
 
     return {
         update(update: ViewUpdate) {
-            const oldPath = path;
-            ({ fs, path } = update.state.facet(CodeblockFacet));
+            const oldConfig = update.startState.facet(CodeblockFacet);
+            const newConfig = update.state.facet(CodeblockFacet);
 
-            if (update.docChanged) save();
-            if (oldPath !== path) startWatching(); // Restart watcher if path changed
+            console.log('in view update', oldConfig, newConfig);
+
+            // Handle path changes
+            if (oldConfig.path !== newConfig.path) {
+                ({ fs, path } = newConfig);
+
+                // Path change requires reading the new file and updating multiple settings
+                fs.readFile(path).then(async content => {
+                    // Get all the necessary extensions and effects in parallel
+                    const [languageSupport, _] = await Promise.all([
+                        getLanguageSupport(path),
+                        createTSEnvironment(path, content)
+                    ]);
+
+                    const unit = getIndentationUnit(content);
+
+                    // Compose all changes into a single transaction
+                    view.dispatch({
+                        changes: { from: 0, to: view.state.doc.length, insert: content },
+                        effects: [
+                            languageCompartment.reconfigure(languageSupport || []),
+                            indentationCompartment.reconfigure(indentUnit.of(unit)),
+                        ]
+                    });
+
+                    // Restart watcher for new path
+                    startWatching();
+                }).catch(console.error);
+            }
+
+            // Handle document changes for saving
+            if (update.docChanged && oldConfig.path === newConfig.path) {
+                save();
+                // const content = update.state.doc.toString();
+
+                // (async () => {
+                //     const _ = await createTSEnvironment(path, content);
+                //     const unit = getIndentationUnit(content);
+
+                //     view.dispatch({
+                //         effects: [
+                //             indentationCompartment.reconfigure(indentUnit.of(unit)),
+                //         ].filter(Boolean)
+                //     });
+                // })();
+            }
         },
         destroy() {
-            console.log('destroyed???');
-            abortController.abort(); // Properly stop the watcher
+            console.log('Destroying codeblock view plugin');
+            abortController.abort(); // Stop the watcher
         }
     };
 });
 
-export async function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
-    const language = await getLanguageSupportForFile(path);
-    const compilerOptions = ts.getDefaultCompilerOptions()
-    const fileMap = await createDefaultMapFromCDN(compilerOptions, '5.7.3', true, ts, lzstring);
-    const doc = await fs.readFile(path);
-    fileMap.set('example.ts', doc)
-    console.log(fileMap)
-    const system = createSystem(fileMap)
-    const env = createVirtualTypeScriptEnvironment(system, ['example.ts'], ts, compilerOptions)
-    console.log(env.languageService)
-
-    const unit = detectIndentationUnit(doc) || '    ';
+// Simplified API for creating a codeblock
+export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
     const state = EditorState.create({
-        doc,
+        doc: "",  // Will be populated reactively
         extensions: [
             basicSetup,
-            codeblock({ fs, path, toolbar }),
-            languageCompartment.of(language || []),
-            vscodeDark,
-            indentUnit.of(unit),
-            keymap.of([indentWithTab]),
-            codeblockTheme,
+            codeblock({ fs, path, toolbar })
         ]
     });
 

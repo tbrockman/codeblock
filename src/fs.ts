@@ -1,5 +1,3 @@
-import type { promises as fs } from "@zenfs/core"
-
 export interface FS {
     /**
      * Reads the entire contents of a file asynchronously
@@ -52,11 +50,3 @@ export interface FS {
         path: string,
     ) => Promise<boolean>;
 }
-
-export type WorkerFS = Omit<typeof fs, 'watch'> &
-{
-    watch: (path: string, options: { encoding: 'utf-8', recursive: true }) => {
-        iter: AsyncGenerator<{ eventType: 'rename' | 'change', filename: string }>
-        signal: { abort: () => void }
-    }
-};

@@ -2,9 +2,10 @@ import type { promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { FS } from "./fs";
 import * as Comlink from 'comlink';
-import { asyncGeneratorTransferHandler } from './utils'
+import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from './rpc/serde';
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
+Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
 
 const fsWorker = new SharedWorker(new URL('./workers/fs.ts', import.meta.url), { type: 'module' });
 const fsInterface = Comlink.wrap<typeof fs>(fsWorker.port);
@@ -20,7 +21,7 @@ const fsImpl: FS = {
         return fsInterface.writeFile(path, data, { encoding: 'utf-8' });
     },
     async *watch(path: string, { signal }) {
-        for await (const e of await fsInterface.watch(path, { encoding: 'utf-8', recursive: true })) {
+        for await (const e of await fsInterface.watch(path, { signal, encoding: 'utf-8', recursive: true })) {
             yield e as { eventType: 'rename' | 'change', filename: string };
         }
     },
