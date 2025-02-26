@@ -1,8 +1,10 @@
-import { createDefaultMapFromCDN, createSystem, createVirtualLanguageServiceHost, createVirtualTypeScriptEnvironment } from "@typescript/vfs";
+import { createDefaultMapFromCDN, createSystem, createVirtualTypeScriptEnvironment } from "@typescript/vfs";
 import ts, { LanguageService } from "typescript";
 import * as lzstring from 'lz-string';
 import * as Comlink from 'comlink';
 import { GetLanguageEnvArgs, VirtualLanguageEnvironment } from "../types";
+import { BrowserMessageReader, BrowserMessageWriter, createProtocolConnection } from "vscode-languageserver-protocol/browser";
+// import { createServerBase } from '@volar/language-server/browser'
 
 const languageEnvCache: Record<string, VirtualLanguageEnvironment> = {};
 const languageEnvFactory: Record<string, () => Promise<VirtualLanguageEnvironment>> = {
@@ -46,3 +48,9 @@ onconnect = async (event) => {
     console.log('LSP worker connected on port: ', port);
     Comlink.expose({ createLanguageEnvironment }, port);
 }
+const worker: Worker = self as any;
+const conn = createProtocolConnection(
+    new BrowserMessageReader(worker),
+    new BrowserMessageWriter(worker),
+);
+conn.listen();
