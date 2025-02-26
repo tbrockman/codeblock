@@ -1,3 +1,6 @@
+import type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
+import { Remote } from "comlink";
+
 export interface FS {
     /**
      * Reads the entire contents of a file asynchronously
@@ -50,3 +53,9 @@ export interface FS {
         path: string,
     ) => Promise<boolean>;
 }
+
+export type GetLanguageServiceArgs = {
+    language: string
+}
+export type GetLanguageEnvArgs = GetLanguageServiceArgs;
+export interface VirtualLanguageEnvironment extends VirtualTypeScriptEnvironment { }

@@ -1,4 +1,5 @@
 import { transferHandlers, TransferHandler, proxy } from 'comlink';
+import { VirtualLanguageEnvironment } from '../types';
 
 const proxyTransferHandler = transferHandlers.get('proxy')!;
 

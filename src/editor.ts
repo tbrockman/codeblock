@@ -1,30 +1,34 @@
 import { EditorView, basicSetup } from "codemirror";
-import { Compartment, EditorState, Facet, StateEffect, StateField } from "@codemirror/state";
+import { Compartment, EditorState, Facet } from "@codemirror/state";
 import { ViewPlugin, ViewUpdate, keymap, KeyBinding, Panel, showPanel } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./theme";
 import { vscodeDark } from '@uiw/codemirror-theme-vscode';
-import { getLanguageSupportForFile } from "./language";
 import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
-import { indentString, indentUnit } from "@codemirror/language";
-import { FS } from "./fs";
-import { createDefaultMapFromCDN, createSystem, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
-import ts from "typescript";
-import lzstring from "lz-string";
+import { indentUnit } from "@codemirror/language";
+import { FS, GetLanguageEnvArgs, VirtualLanguageEnvironment } from "./types";
+import { extToLanguageMap } from "./constants";
+import * as Comlink from 'comlink';
+import { getLanguageSupport } from "./lsp";
 
-// Configuration types and facets
-type CodeblockConfig = { fs: FS; path: string; toolbar: boolean };
+const languageEnvWorker = new SharedWorker(new URL('./workers/lsp.ts', import.meta.url), { type: 'module' });
+const { createLanguageEnvironment } = Comlink.wrap<{ createLanguageEnvironment: (args: GetLanguageEnvArgs) => Promise<VirtualLanguageEnvironment> }>(languageEnvWorker.port);
 
-const CodeblockFacet = Facet.define<CodeblockConfig, CodeblockConfig>({
+type OpinionatedConfig = { fs: FS; cwd: string, path: string, toolbar: boolean };
+
+const CodeblockFacet = Facet.define<OpinionatedConfig, OpinionatedConfig>({
+    combine: (values) => values[0]
+});
+const LanguageEnvironmentFacet = Facet.define<VirtualLanguageEnvironment | null, VirtualLanguageEnvironment | null>({
     combine: (values) => values[0]
 });
 
 // Compartments for dynamically reconfiguring extensions
 const configCompartment = new Compartment();
-const languageCompartment = new Compartment();
+const languageSupportCompartment = new Compartment();
 const indentationCompartment = new Compartment();
-const tsEnvironmentCompartment = new Compartment();
+const languageEnvironmentCompartment = new Compartment();
 
 // Create a custom panel for the toolbar
 function toolbarPanel(view: EditorView): Panel {
@@ -94,12 +98,12 @@ const navigationKeymap: KeyBinding[] = [{
 }];
 
 // Main codeblock plugin creation function
-const codeblock = (initialConfig: CodeblockConfig) => {
+const opinionated = (initialConfig: OpinionatedConfig) => {
     return [
         configCompartment.of(CodeblockFacet.of(initialConfig)),
-        languageCompartment.of([]),
+        languageSupportCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
-        tsEnvironmentCompartment.of([]),
+        languageEnvironmentCompartment.of([]),
         showPanel.of(initialConfig.toolbar ? toolbarPanel : null),
         codeblockTheme,
         codeblockView,
@@ -155,55 +159,48 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
         })();
     };
 
-    // Get language support based on file path
-    const getLanguageSupport = async (filePath: string) => {
-        try {
-            return await getLanguageSupportForFile(filePath);
-        } catch (error) {
-            console.error("Failed to get language support:", error);
-            return null;
-        }
-    };
+    const languageFromExt = (ext: string) => {
+        return extToLanguageMap[ext] || null;
+    }
 
     // Detect indentation based on file content
     const getIndentationUnit = (content: string) => {
         return detectIndentationUnit(content) || '    ';
     };
 
-    // Create TypeScript environment
-    const createTSEnvironment = async (filePath: string, content: string) => {
+    // Create language environment
+    const getLanguageEnvironment = async (language: string) => {
         try {
-            const compilerOptions = ts.getDefaultCompilerOptions();
-            const fileMap = await createDefaultMapFromCDN(compilerOptions, '5.7.3', true, ts, lzstring);
-
-            // Use the actual file path as the key in the file map
-            const fileName = filePath.split('/').pop() || 'example.ts';
-            fileMap.set(fileName, content);
-
-            const system = createSystem(fileMap);
-            return createVirtualTypeScriptEnvironment(system, [fileName], ts, compilerOptions);
+            console.log('getting language env', language)
+            return await createLanguageEnvironment({ language });
         } catch (error) {
             console.error("Failed to create TypeScript environment:", error);
             return null;
         }
     };
 
-    // Initial setup - with composed transactions
-    setTimeout(async () => {
+    (async () => {
         if (initialized) return;
         initialized = true;
         console.log('initializing');
 
         try {
-            // Step 1: Read the file content
             const content = await fs.readFile(path);
             console.log('read file content', content);
+            const ext = path.split('.').pop()?.toLowerCase();
+            const language = languageFromExt(ext || '');
+            console.log('language', language);
+            let languageSupport = null, languageEnv = null;
 
-            // Step 2: Get all the necessary extensions and effects in parallel
-            const [languageSupport] = await Promise.all([
-                getLanguageSupport(path),
-                createTSEnvironment(path, content)
-            ]);
+            if (language) {
+                languageSupport = await getLanguageSupport(language);
+                console.log('got lang support', languageSupport);
+                languageEnv = await getLanguageEnvironment(language);
+                console.log('got lang env', languageEnv);
+                const service = await languageEnv?.languageService;
+                console.log('got service', service);
+
+            }
 
             const unit = getIndentationUnit(content);
 
@@ -211,11 +208,10 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [
-                    // Language support
-                    languageCompartment.reconfigure(languageSupport || []),
-                    // Indentation
+                    languageSupportCompartment.reconfigure(languageSupport || []),
+                    languageEnvironmentCompartment.reconfigure(LanguageEnvironmentFacet.of(languageEnv)),
                     indentationCompartment.reconfigure(indentUnit.of(unit)),
-                ].filter(Boolean) // Filter out null effects
+                ]
             });
 
             console.log('applied all initial settings');
@@ -226,7 +222,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
         } catch (error) {
             console.error("Failed to initialize codeblock:", error);
         }
-    }, 0);
+    })();
 
     return {
         update(update: ViewUpdate) {
@@ -242,10 +238,17 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                 // Path change requires reading the new file and updating multiple settings
                 fs.readFile(path).then(async content => {
                     // Get all the necessary extensions and effects in parallel
-                    const [languageSupport, _] = await Promise.all([
-                        getLanguageSupport(path),
-                        createTSEnvironment(path, content)
-                    ]);
+                    const ext = path.split('.').pop()?.toLowerCase();
+                    const language = languageFromExt(ext || '');
+                    console.log('language', language);
+                    let languageSupport = null, languageEnv = null;
+
+                    if (language) {
+                        [languageSupport, languageEnv] = await Promise.all([
+                            getLanguageSupport(language),
+                            getLanguageEnvironment(language)
+                        ]);
+                    }
 
                     const unit = getIndentationUnit(content);
 
@@ -253,7 +256,8 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                     view.dispatch({
                         changes: { from: 0, to: view.state.doc.length, insert: content },
                         effects: [
-                            languageCompartment.reconfigure(languageSupport || []),
+                            languageSupportCompartment.reconfigure(languageSupport || []),
+                            languageEnvironmentCompartment.reconfigure(LanguageEnvironmentFacet.of(languageEnv)),
                             indentationCompartment.reconfigure(indentUnit.of(unit)),
                         ]
                     });
@@ -287,13 +291,21 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
     };
 });
 
+export type CreateCodeblockArgs = {
+    parent: HTMLElement;
+    fs: FS;
+    path?: string;
+    cwd?: string;
+    toolbar?: boolean;
+}
+
 // Simplified API for creating a codeblock
-export function createCodeblock(parent: HTMLElement, fs: FS, path: string, toolbar = true) {
+export function createCodeblock({ parent, fs, path = 'README.md', cwd = '/', toolbar = true }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: "",  // Will be populated reactively
         extensions: [
             basicSetup,
-            codeblock({ fs, path, toolbar })
+            opinionated({ fs, path, cwd, toolbar })
         ]
     });
 

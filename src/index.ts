@@ -1,6 +1,6 @@
 import type { promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
-import { FS } from "./fs";
+import { FS } from "./types";
 import * as Comlink from 'comlink';
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from './rpc/serde';
 
@@ -9,7 +9,6 @@ Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
 
 const fsWorker = new SharedWorker(new URL('./workers/fs.ts', import.meta.url), { type: 'module' });
 const fsInterface = Comlink.wrap<typeof fs>(fsWorker.port);
-
 
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
 
@@ -33,4 +32,4 @@ const fsImpl: FS = {
     }
 };
 
-createCodeblock(editorContainer, fsImpl, 'example.ts');
+createCodeblock({ parent: editorContainer, fs: fsImpl, path: 'example.ts', toolbar: true });
