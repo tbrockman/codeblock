@@ -1,9 +1,6 @@
 import type { LanguageSupport } from '@codemirror/language';
-import { createDefaultMapFromCDN, createSystem, createVirtualLanguageServiceHost, createVirtualTypeScriptEnvironment } from "@typescript/vfs";
-import ts, { LanguageService } from "typescript";
-import * as lzstring from 'lz-string';
-import * as Comlink from 'comlink';
-import { GetLanguageEnvArgs, VirtualLanguageEnvironment } from "../types";
+import { GetLanguageEnvArgs } from "../types";
+import { LanguageServer } from '@volar/language-server';
 
 const languageSupportCache: Record<string, LanguageSupport> = {};
 const languageSupportMap: Record<string, () => Promise<LanguageSupport>> = {
@@ -35,19 +32,10 @@ export const getLanguageSupport = async (language: string) => {
     return support;
 }
 
-const languageEnvCache: Record<string, VirtualLanguageEnvironment> = {};
-const languageEnvFactory: Record<string, () => Promise<VirtualLanguageEnvironment>> = {
+const languageServerCache: Record<string, LanguageServer> = {};
+const languageServerFactory: Record<string, () => Promise<LanguageServer>> = {
     javascript: async () => {
-        const compilerOptions = ts.getDefaultCompilerOptions();
-        const fileMap = await createDefaultMapFromCDN(compilerOptions, '5.7.3', false, ts, lzstring);
-        const system = createSystem(fileMap);
-        // TODO: addAllFilesFromFolder(map, "node_modules/@types")
-        // 1. Need to create method allowing users to upload their own fs
-        //    Let's not worry about allowing users to install packages in the browser yet
-        // 2. Need method to export code
-        // 3. Need method to execute code
-        const env = createVirtualTypeScriptEnvironment(system, [], ts, compilerOptions);
-        return Comlink.proxy<VirtualLanguageEnvironment>({ ...env, languageService: Comlink.proxy(env.languageService) as LanguageService & Comlink.ProxyMarked });
+
     },
     // python: async () => {
     //     const { createLanguageService } = await import('pyright-internal');
@@ -61,13 +49,13 @@ const languageEnvFactory: Record<string, () => Promise<VirtualLanguageEnvironmen
 }
 
 const createLanguageEnvironment = async ({ language }: GetLanguageEnvArgs) => {
-    if (languageEnvCache[language]) {
-        return languageEnvCache[language];
+    if (languageServerCache[language]) {
+        return languageServerCache[language];
     }
-    const loader = languageEnvFactory[language];
+    const loader = languageServerFactory[language];
     if (!loader) return null;
 
     const env = await loader();
-    languageEnvCache[language] = env;
+    languageServerCache[language] = env;
     return env;
 }

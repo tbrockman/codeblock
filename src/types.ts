@@ -1,5 +1,5 @@
 import type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
-import { Remote } from "comlink";
+import { FileStat, FileType } from "@volar/language-service";
 
 export interface FS {
     /**
@@ -44,6 +44,10 @@ export interface FS {
         }
     ) => Promise<void>;
 
+    readDir: (
+        path: string,
+    ) => Promise<[string, FileType][]>;
+
     /**
      * Checks whether a given file or folder exists
      * @param path A path to a file or folder
@@ -52,6 +56,10 @@ export interface FS {
     exists: (
         path: string,
     ) => Promise<boolean>;
+
+    stat: (
+        path: string,
+    ) => Promise<FileStat | undefined>;
 }
 
 export type GetLanguageServiceArgs = {
