@@ -27,6 +27,7 @@ export type CreateTypescriptEnvironmentArgs = {
 }
 
 export const createLanguageServer = ({ connection, fs }: CreateTypescriptEnvironmentArgs) => {
+    console.log('creating language server', connection, fs)
     const server = createServerBase(connection, {
         timer: {
             setImmediate: (callback: (...args: any[]) => void, ...args: any[]) => {

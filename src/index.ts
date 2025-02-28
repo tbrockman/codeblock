@@ -1,8 +1,9 @@
-import type { promises as fs } from "@zenfs/core";
+import type { Dirent, promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { FS } from "./types";
 import * as Comlink from 'comlink';
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from './rpc/serde';
+import { FileStat, FileType } from "@volar/language-service";
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
@@ -27,9 +28,27 @@ const fsImpl: FS = {
     async mkdir(path: string, options: { recursive: boolean }) {
         await fsInterface.mkdir(path, options);
     },
+    async readDir(path: string) {
+        const files = await fsInterface.readdir(path, { withFileTypes: true }) as Dirent[];
+        return files.reduce((acc: [string, FileType][], ent: Dirent) => {
+            const type = ent.isDirectory() ? FileType.Directory : ent.isSymbolicLink() ? FileType.SymbolicLink : FileType.File;
+            acc.push([ent.name, type]);
+            return acc;
+        }, [] as [string, FileType][]);
+    },
     async exists(path: string) {
         return fsInterface.exists(path);
-    }
+    },
+    async stat(path: string) {
+        const stat = await fsInterface.stat(path)
+        const type = stat.isDirectory() ? FileType.Directory : stat.isSymbolicLink() ? FileType.SymbolicLink : FileType.File;
+        return {
+            mtime: stat.mtime.getTime(),
+            ctime: stat.ctime.getTime(),
+            size: stat.size,
+            type
+        } as FileStat;
+    },
 };
 
 createCodeblock({ parent: editorContainer, fs: fsImpl, path: 'example.ts', toolbar: true });

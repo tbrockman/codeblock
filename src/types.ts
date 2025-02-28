@@ -61,9 +61,3 @@ export interface FS {
         path: string,
     ) => Promise<FileStat | undefined>;
 }
-
-export type GetLanguageServiceArgs = {
-    language: string
-}
-export type GetLanguageEnvArgs = GetLanguageServiceArgs;
-export interface VirtualLanguageEnvironment extends VirtualTypeScriptEnvironment { }

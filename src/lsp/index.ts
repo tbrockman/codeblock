@@ -1,6 +1,7 @@
 import type { LanguageSupport } from '@codemirror/language';
-import { GetLanguageEnvArgs } from "../types";
-import { LanguageServer } from '@volar/language-server';
+import { FS } from "../types";
+import { Connection, LanguageServer } from '@volar/language-server';
+import { createLanguageServer as createTypescriptServer } from './typescript';
 
 const languageSupportCache: Record<string, LanguageSupport> = {};
 const languageSupportMap: Record<string, () => Promise<LanguageSupport>> = {
@@ -32,10 +33,16 @@ export const getLanguageSupport = async (language: string) => {
     return support;
 }
 
+export type LanguageServerArgs = {
+    connection: Connection
+    fs: FS
+}
+export type LanguageServerProvider = (args: LanguageServerArgs) => Promise<LanguageServer>;
 const languageServerCache: Record<string, LanguageServer> = {};
-const languageServerFactory: Record<string, () => Promise<LanguageServer>> = {
-    javascript: async () => {
-
+const languageServerFactory: Record<string, LanguageServerProvider> = {
+    javascript: async (args) => {
+        console.log('before create')
+        return createTypescriptServer(args)
     },
     // python: async () => {
     //     const { createLanguageService } = await import('pyright-internal');
@@ -48,14 +55,19 @@ const languageServerFactory: Record<string, () => Promise<LanguageServer>> = {
     // Add more languages as needed
 }
 
-const createLanguageEnvironment = async ({ language }: GetLanguageEnvArgs) => {
+export type CreateLanguageServerArgs = {
+    language: string
+} & LanguageServerArgs
+
+export const createLanguageServer = async ({ language: lang, fs, connection }: CreateLanguageServerArgs) => {
+    let language = await lang;
     if (languageServerCache[language]) {
         return languageServerCache[language];
     }
     const loader = languageServerFactory[language];
     if (!loader) return null;
 
-    const env = await loader();
+    const env = await loader({ fs, connection });
     languageServerCache[language] = env;
     return env;
 }

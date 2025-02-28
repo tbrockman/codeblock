@@ -7,20 +7,19 @@ import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { indentWithTab } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { indentUnit } from "@codemirror/language";
-import { FS, GetLanguageEnvArgs, VirtualLanguageEnvironment } from "./types";
+import { FS } from "./types";
 import { extToLanguageMap } from "./constants";
 import * as Comlink from 'comlink';
-import { getLanguageSupport } from "./lsp";
+import { CreateLanguageServerArgs, getLanguageSupport } from "./lsp";
+import PostMessageWorkerTransport from "./rpc/transport";
+import { languageServerWithTransport } from '@marimo-team/codemirror-languageserver';
 
-const languageEnvWorker = new SharedWorker(new URL('./workers/lsp.ts', import.meta.url), { type: 'module' });
-const { createLanguageEnvironment } = Comlink.wrap<{ createLanguageEnvironment: (args: GetLanguageEnvArgs) => Promise<VirtualLanguageEnvironment> }>(languageEnvWorker.port);
+const lspWorker = new SharedWorker(new URL('./workers/server.ts', import.meta.url), { type: 'module' });
+const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: Omit<CreateLanguageServerArgs, 'connection'>) => Promise<void> }>(lspWorker.port);
 
 type OpinionatedConfig = { fs: FS; cwd: string, path: string, toolbar: boolean };
 
 const CodeblockFacet = Facet.define<OpinionatedConfig, OpinionatedConfig>({
-    combine: (values) => values[0]
-});
-const LanguageEnvironmentFacet = Facet.define<VirtualLanguageEnvironment | null, VirtualLanguageEnvironment | null>({
     combine: (values) => values[0]
 });
 
@@ -28,7 +27,7 @@ const LanguageEnvironmentFacet = Facet.define<VirtualLanguageEnvironment | null,
 const configCompartment = new Compartment();
 const languageSupportCompartment = new Compartment();
 const indentationCompartment = new Compartment();
-const languageEnvironmentCompartment = new Compartment();
+const languageServerCompartment = new Compartment();
 
 // Create a custom panel for the toolbar
 function toolbarPanel(view: EditorView): Panel {
@@ -103,7 +102,7 @@ const opinionated = (initialConfig: OpinionatedConfig) => {
         configCompartment.of(CodeblockFacet.of(initialConfig)),
         languageSupportCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
-        languageEnvironmentCompartment.of([]),
+        languageServerCompartment.of([]),
         showPanel.of(initialConfig.toolbar ? toolbarPanel : null),
         codeblockTheme,
         codeblockView,
@@ -169,10 +168,20 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
     };
 
     // Create language environment
-    const getLanguageEnvironment = async (language: string) => {
+    const startLanguageServer = async (language: string) => {
         try {
-            console.log('getting language env', language)
-            return await createLanguageEnvironment({ language });
+            const test = {
+                readFile: Comlink.proxy(fs.readFile),
+                writeFile: Comlink.proxy(fs.writeFile),
+                watch: Comlink.proxy(fs.watch),
+                mkdir: Comlink.proxy(fs.mkdir),
+                readDir: Comlink.proxy(fs.readDir),
+                exists: Comlink.proxy(fs.exists),
+                stat: Comlink.proxy(fs.stat),
+            }
+            console.log('getting language env', language, test)
+
+            await createLanguageServer(Comlink.proxy({ language, fs }));
         } catch (error) {
             console.error("Failed to create TypeScript environment:", error);
             return null;
@@ -190,16 +199,21 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             const ext = path.split('.').pop()?.toLowerCase();
             const language = languageFromExt(ext || '');
             console.log('language', language);
-            let languageSupport = null, languageEnv = null;
+            let languageSupport = null;
 
             if (language) {
                 languageSupport = await getLanguageSupport(language);
                 console.log('got lang support', languageSupport);
-                languageEnv = await getLanguageEnvironment(language);
-                console.log('got lang env', languageEnv);
-                const service = await languageEnv?.languageService;
-                console.log('got service', service);
-
+                await startLanguageServer(language);
+                // @ts-ignore
+                const transport = new PostMessageWorkerTransport(lspWorker.port);
+                languageServerCompartment.reconfigure(languageServerWithTransport({
+                    transport,
+                    rootUri: "file:///",
+                    workspaceFolders: null,
+                    documentUri: `file:///example.ts`,
+                    languageId: "typescript",
+                }))
             }
 
             const unit = getIndentationUnit(content);
@@ -209,7 +223,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                 changes: { from: 0, to: view.state.doc.length, insert: content },
                 effects: [
                     languageSupportCompartment.reconfigure(languageSupport || []),
-                    languageEnvironmentCompartment.reconfigure(LanguageEnvironmentFacet.of(languageEnv)),
+                    // languageEnvironmentCompartment.reconfigure(LanguageEnvironmentFacet.of(languageEnv)),
                     indentationCompartment.reconfigure(indentUnit.of(unit)),
                 ]
             });
@@ -246,7 +260,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                     if (language) {
                         [languageSupport, languageEnv] = await Promise.all([
                             getLanguageSupport(language),
-                            getLanguageEnvironment(language)
+                            startLanguageServer(language)
                         ]);
                     }
 
@@ -257,7 +271,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                         changes: { from: 0, to: view.state.doc.length, insert: content },
                         effects: [
                             languageSupportCompartment.reconfigure(languageSupport || []),
-                            languageEnvironmentCompartment.reconfigure(LanguageEnvironmentFacet.of(languageEnv)),
+                            // languageEnvironmentCompartment.reconfigure(LanguageEnvironmentFacet.of(languageEnv)),
                             indentationCompartment.reconfigure(indentUnit.of(unit)),
                         ]
                     });

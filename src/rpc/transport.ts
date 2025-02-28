@@ -1,4 +1,4 @@
-import { Transport } from "@open-rpc/client-js/src/transports/Transport";
+import { Transport } from "@open-rpc/client-js/build/transports/Transport";
 import { getNotifications } from "@open-rpc/client-js/src/Request";
 import type { JSONRPCRequestData, IJSONRPCData } from "@open-rpc/client-js/src/Request";
 
