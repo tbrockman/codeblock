@@ -15,6 +15,7 @@ import PostMessageWorkerTransport from "./rpc/transport";
 import { languageServerWithTransport } from '@marimo-team/codemirror-languageserver';
 
 const lspWorker = new SharedWorker(new URL('./workers/server.ts', import.meta.url), { type: 'module' });
+lspWorker.port.start();
 const { createLanguageServer } = Comlink.wrap<{ createLanguageServer: (args: Omit<CreateLanguageServerArgs, 'connection'>) => Promise<void> }>(lspWorker.port);
 
 type OpinionatedConfig = { fs: FS; cwd: string, path: string, toolbar: boolean };
