@@ -10,9 +10,9 @@ import { indentUnit } from "@codemirror/language";
 import { FS } from "./types";
 import { extToLanguageMap } from "./constants";
 import * as Comlink from 'comlink';
-import { CreateLanguageServerArgs, getLanguageSupport } from "./lsp";
+import { CreateLanguageServerArgs, getLanguageSupport } from "./servers";
 import PostMessageWorkerTransport from "./rpc/transport";
-import { languageServerWithTransport } from '@marimo-team/codemirror-languageserver';
+import { LanguageServerClient, languageServerWithTransport } from '@marimo-team/codemirror-languageserver';
 
 const lspWorker = new SharedWorker(new URL('./workers/server.ts', import.meta.url), { type: 'module' });
 lspWorker.port.start();
@@ -195,7 +195,21 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
         console.log('initializing');
 
         try {
+            const test = `{
+  "compilerOptions": {
+    "module": "system",
+    "noImplicitAny": true,
+    "removeComments": true,
+    "preserveConstEnums": true,
+    "outFile": "../../built/local/tsc.js",
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["**/*.spec.ts"]
+}`
             const content = await fs.readFile(path);
+            await fs.writeFile('tsconfig.json', test);
+            await fs.writeFile('jsconfig.json', '{}');
             console.log('read file content', content);
             const ext = path.split('.').pop()?.toLowerCase();
             const language = languageFromExt(ext || '');
@@ -208,13 +222,27 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
                 await startLanguageServer(language);
                 // @ts-ignore
                 const transport = new PostMessageWorkerTransport(lspWorker.port);
-                languageServerCompartment.reconfigure(languageServerWithTransport({
+                const client = new LanguageServerClient({
                     transport,
+                    documentUri: `file:///${path}`,
+                    languageId: language,
+                    rootUri: 'file:///',
+                    workspaceFolders: [{ name: 'workspace', uri: 'file:///' }]
+                });
+                console.log('created client', client);
+                const ext = languageServerWithTransport({
+                    transport,
+                    client,
                     rootUri: "file:///",
                     workspaceFolders: null,
                     documentUri: `file:///example.ts`,
                     languageId: "typescript",
-                }))
+                })
+                client.initializePromise.then(async () => {
+                    await client.textDocumentDidOpen({ textDocument: { uri: `file:///${path}`, languageId: language, version: 1, text: content } })
+                    console.log('sent didOpen');
+                })
+                languageServerCompartment.reconfigure(ext)
             }
 
             const unit = getIndentationUnit(content);

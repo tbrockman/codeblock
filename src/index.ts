@@ -1,4 +1,4 @@
-import type { Dirent, promises as fs } from "@zenfs/core";
+import type { Dirent, promises as fs, Stats } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { FS } from "./types";
 import * as Comlink from 'comlink';
@@ -29,10 +29,22 @@ const fsImpl: FS = {
         await fsInterface.mkdir(path, options);
     },
     async readDir(path: string) {
-        const files = await fsInterface.readdir(path, { withFileTypes: true }) as Dirent[];
+        const files = await fsInterface.readdir(path, { withFileTypes: true, encoding: 'utf-8' }) as Dirent[];
+        console.log('files from readDir', files)
+        // TODO: due to serialization, files are not Dirent[]
         return files.reduce((acc: [string, FileType][], ent: Dirent) => {
-            const type = ent.isDirectory() ? FileType.Directory : ent.isSymbolicLink() ? FileType.SymbolicLink : FileType.File;
-            acc.push([ent.name, type]);
+            // TODO: handle folder and symlink properly
+            let type = FileType.File;
+            // @ts-expect-error
+            switch ((ent.stats.mode as number) & 0o170000) {
+                case 0o040000:
+                    type = FileType.Directory;
+                    break;
+                case 0o120000:
+                    type = FileType.SymbolicLink;
+                    break;
+            }
+            acc.push([ent.path, type]);
             return acc;
         }, [] as [string, FileType][]);
     },
@@ -41,10 +53,23 @@ const fsImpl: FS = {
     },
     async stat(path: string) {
         const stat = await fsInterface.stat(path)
-        const type = stat.isDirectory() ? FileType.Directory : stat.isSymbolicLink() ? FileType.SymbolicLink : FileType.File;
+        console.log('in stat with path', path, stat)
+        // TODO: handle folder and symlink properly
+        let type = FileType.File;
+
+        switch ((stat.mode as number) & 0o170000) {
+            case 0o040000:
+                type = FileType.Directory;
+                break;
+            case 0o120000:
+                type = FileType.SymbolicLink;
+                break;
+        }
+
         return {
-            mtime: stat.mtime.getTime(),
-            ctime: stat.ctime.getTime(),
+            name: path,
+            mtime: 0,
+            ctime: 0,
             size: stat.size,
             type
         } as FileStat;
