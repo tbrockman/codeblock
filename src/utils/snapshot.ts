@@ -3,7 +3,7 @@ import parse from 'parse-gitignore';
 import * as nodeFs from 'node:fs';
 import ignore, { Ignore } from 'ignore';
 import { constants, PathLike } from 'node:fs';
-import { promises as _fs, configure, CopyOnWrite, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
+import { promises as _fs, configure, CopyOnWrite, Passthrough, PassthroughFS, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 
 export const pathExists = async (filePath: PathLike, fs: typeof _fs) => {
     try {
@@ -101,25 +101,25 @@ export type TakeSnapshotProps = {
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const { root, include, exclude, gitignore } = { ...snapshotDefaults, ...props };
 
-    const readable = await resolveMountConfig({ backend: Passthrough, label: 'ro', fs: nodeFs });
+    // const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: 'C' });
+    const writable = await resolveMountConfig({ backend: SingleBuffer, buffer: new ArrayBuffer(0x10000000) })
+    const readable = new PassthroughFS(nodeFs, '');
 
-    configure({
+    console.log('directory', root, path.resolve(root), readable.path(root))
+    console.log('nodefs', nodeFs.readdirSync(root))
+    console.log('root dir', await readable.readdir(root))
+
+    await configure({
         mounts: {
-            '/mnt/snapshot': {
-                backend: SingleBuffer,
-                buffer: new ArrayBuffer(0x10000000),
-            },
             '/': {
                 backend: CopyOnWrite,
-                options: {
-                    readable,
-                    writable: '/mnt/snapshot',
-                }
+                readable,
+                writable,
             }
         }
     })
-
-    _fs.cp(process.cwd(), '/mnt/snapshot', {
+    console.log('cwd', process.cwd())
+    await _fs.cp(process.cwd(), process.cwd(), {
         recursive: true,
         preserveTimestamps: true,
         filter: async (source, destination) => {
