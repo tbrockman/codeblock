@@ -4,8 +4,8 @@ import { takeSnapshot } from './src/utils/snapshot';
 
 const viteDefaults = {
     root: process.cwd(),
-    include: ['**/*.{js,jsx,ts,tsx}'],
-    exclude: ['node_modules', 'dist', 'build', 'coverage', 'public', 'static'],
+    include: ['*', 'node_modules/@types', 'node_modules/@typescript'],
+    exclude: ['.git', 'dist', 'build', 'coverage', 'static'],
     gitignore: true,
     transform: async (fs: any) => fs,
 }
@@ -35,7 +35,9 @@ export const snapshot = async (props: SnapshotProps = {}) => {
             if (id === resolvedVirtualModuleId) {
                 // @ts-expect-error
                 const fsBuffer = await transform?.(await takeSnapshot({ root, include, exclude, gitignore }));
-                return `export const fsbuffer = ${JSON.stringify(fsBuffer)}`
+                console.log('have fsbuffer', fsBuffer)
+                return 'export const fsbuffer = ""'
+                // return `export const fsbuffer = ${JSON.stringify(fsBuffer)}`
             }
             return undefined;
         },

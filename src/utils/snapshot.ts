@@ -2,19 +2,7 @@ import path from 'node:path';
 import parse from 'parse-gitignore';
 import * as nodeFs from 'node:fs';
 import ignore, { Ignore } from 'ignore';
-import { constants, PathLike } from 'node:fs';
-import { promises as _fs, configure, CopyOnWrite, Passthrough, PassthroughFS, resolveMountConfig, SingleBuffer } from "@zenfs/core";
-
-export const pathExists = async (filePath: PathLike, fs: typeof _fs) => {
-    try {
-        await fs.access(filePath, constants.F_OK);
-        return true; // The path exists
-    }
-    catch {
-        return false; // The path does not exist
-    }
-};
-
+import { promises as _fs, AsyncFSMethods, configure, CopyOnWrite, FileSystem, mount, Passthrough, PassthroughFS, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 
 export type CopyDirOptions = {
     src: typeof _fs;
@@ -50,22 +38,24 @@ export const copyDir = async function* (dir: string, { src, dest, exclude, rootD
 };
 
 export type IgnoreArgs = {
-    fs: typeof _fs,
+    fs: AsyncFSMethods,
     root: string,
     exclude: string[],
     gitignore: string | null
 }
 
-export const buildIgnore = async ({ fs = _fs, root, exclude, gitignore }: IgnoreArgs) => {
+export const buildIgnore = async ({ fs, root, exclude, gitignore }: IgnoreArgs) => {
     const excluded = ignore().add(exclude);
 
     if (gitignore) {
         const resolved = path.resolve(root, gitignore);
 
-        if (await pathExists(resolved, fs)) {
-            const ignoreFiles = await fs.readFile(resolved);
+        if (await fs.exists(resolved)) {
+            const buf = new Uint8Array();
+            const stat = await fs.stat(resolved)
+            await fs.read(resolved, buf, 0, stat.size)
             // @ts-ignore
-            const { patterns } = parse(ignoreFiles);
+            const { patterns } = parse(new TextDecoder().decode(buf, 'utf-8'));
             excluded.add(patterns);
         }
     }
@@ -102,31 +92,31 @@ export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const { root, include, exclude, gitignore } = { ...snapshotDefaults, ...props };
 
     // const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: 'C' });
-    const writable = await resolveMountConfig({ backend: SingleBuffer, buffer: new ArrayBuffer(0x10000000) })
+    // const writable = await resolveMountConfig()
+    console.log('resolved writable')
     const readable = new PassthroughFS(nodeFs, '');
-
-    console.log('directory', root, path.resolve(root), readable.path(root))
-    console.log('nodefs', nodeFs.readdirSync(root))
-    console.log('root dir', await readable.readdir(root))
-
     await configure({
         mounts: {
-            '/': {
-                backend: CopyOnWrite,
-                readable,
-                writable,
-            }
+            '/mnt/snapshot': { backend: SingleBuffer, buffer: new ArrayBuffer(1024 * 1024 * 1024 / 2) },
         }
     })
-    console.log('cwd', process.cwd())
-    await _fs.cp(process.cwd(), process.cwd(), {
+    mount('/tmp', readable);
+    await readable.ready()
+    await _fs.cp(process.cwd(), '/mnt/snapshot', {
         recursive: true,
         preserveTimestamps: true,
-        filter: async (source, destination) => {
-            console.log('source', source, destination)
-            const excluded = await buildIgnore({ fs: _fs, root, exclude, gitignore });
-            const relativePath = path.relative(root, source);
-            return excluded.ignores(relativePath) === false;
+        filter: async (source, _) => {
+            try {
+                const excluded = await buildIgnore({ fs: readable, root, exclude, gitignore });
+                const included = ignore().add(include);
+                const relativePath = path.relative(root, source);
+                const isIncluded = included.ignores(relativePath) === true;
+                const isNotExcluded = excluded.ignores(relativePath) === false;
+                return isIncluded && isNotExcluded
+            } catch (e) {
+                console.error(e)
+                return false;
+            }
         },
     });
 
