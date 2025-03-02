@@ -2,7 +2,7 @@ import path from 'node:path';
 import parse from 'parse-gitignore';
 import * as nodeFs from 'node:fs';
 import ignore, { Ignore } from 'ignore';
-import { promises as _fs, AsyncFSMethods, configure, CopyOnWrite, FileSystem, mount, Passthrough, PassthroughFS, resolveMountConfig, SingleBuffer } from "@zenfs/core";
+import { promises as _fs, AsyncFSMethods, configure, CopyOnWrite, mount, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 
 export type CopyDirOptions = {
     src: typeof _fs;
@@ -91,34 +91,46 @@ export type TakeSnapshotProps = {
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const { root, include, exclude, gitignore } = { ...snapshotDefaults, ...props };
 
-    // const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: 'C' });
     // const writable = await resolveMountConfig()
     console.log('resolved writable')
-    const readable = new PassthroughFS(nodeFs, '');
-    await configure({
-        mounts: {
-            '/mnt/snapshot': { backend: SingleBuffer, buffer: new ArrayBuffer(1024 * 1024 * 1024 / 2) },
-        }
-    })
-    mount('/tmp', readable);
+    const buffer = new ArrayBuffer(1024 * 1024 * 1024 / 2);
+    const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs });
+    const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
+    console.log('before any mounting')
+    mount('/mnt/host', readable);
+    mount('/mnt/snapshot', writable);
     await readable.ready()
-    await _fs.cp(process.cwd(), '/mnt/snapshot', {
-        recursive: true,
-        preserveTimestamps: true,
-        filter: async (source, _) => {
-            try {
-                const excluded = await buildIgnore({ fs: readable, root, exclude, gitignore });
-                const included = ignore().add(include);
-                const relativePath = path.relative(root, source);
-                const isIncluded = included.ignores(relativePath) === true;
-                const isNotExcluded = excluded.ignores(relativePath) === false;
-                return isIncluded && isNotExcluded
-            } catch (e) {
-                console.error(e)
-                return false;
-            }
-        },
-    });
+    const joined = path.join('/mnt/host', process.cwd())
+    console.log('copying', joined, process.cwd(), 'what??', path.normalize(process.cwd()))
+    const excluded = await buildIgnore({ fs: readable, root, exclude, gitignore });
+    const included = ignore().add(include);
+
+    console.log('exists', await _fs.exists(joined))
+
+    try {
+        await _fs.cp(joined, '/mnt/snapshot', {
+            recursive: true,
+            preserveTimestamps: true,
+            filter: async (source, _) => {
+                try {
+                    const relativePath = path.relative(joined, source);
+                    const isIncluded = included.ignores(relativePath) === true;
+                    const isNotExcluded = excluded.ignores(relativePath) === false;
+                    console.log('checking relative', relativePath, source, 'included: ', isIncluded && isNotExcluded)
+                    return isIncluded && isNotExcluded
+                } catch (e) {
+                    console.error('got error', e)
+                    return false;
+                }
+            },
+        });
+    } catch (e) {
+        console.error('got error', e)
+
+    }
+
+    console.log('before buff')
+    return buffer;
 
     // eslint-disable-next-line
     // for await (const _ of copyDir(root, { src, dest, include, exclude: excluded })) { }

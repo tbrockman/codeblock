@@ -4,7 +4,7 @@ import { takeSnapshot } from './src/utils/snapshot';
 
 const viteDefaults = {
     root: process.cwd(),
-    include: ['*', 'node_modules/@types', 'node_modules/@typescript'],
+    include: [],
     exclude: ['.git', 'dist', 'build', 'coverage', 'static'],
     gitignore: true,
     transform: async (fs: any) => fs,
@@ -47,7 +47,7 @@ export const snapshot = async (props: SnapshotProps = {}) => {
 export default function getConfig() {
     return defineConfig({
         plugins: [
-            snapshot({ gitignore: false, include: ['**/*'] })
+            snapshot({ gitignore: false, include: ['src', 'node_modules/@types', 'node_modules/@typescript'], exclude: ['.git'] })
         ],
     })
 }
