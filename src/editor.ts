@@ -171,16 +171,16 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
     // Create language environment
     const startLanguageServer = async (language: string) => {
         try {
-            const test = {
-                readFile: Comlink.proxy(fs.readFile),
-                writeFile: Comlink.proxy(fs.writeFile),
-                watch: Comlink.proxy(fs.watch),
-                mkdir: Comlink.proxy(fs.mkdir),
-                readDir: Comlink.proxy(fs.readDir),
-                exists: Comlink.proxy(fs.exists),
-                stat: Comlink.proxy(fs.stat),
-            }
-            console.log('getting language env', language, test)
+            // const test = {
+            //     readFile: Comlink.proxy(fs.readFile),
+            //     writeFile: Comlink.proxy(fs.writeFile),
+            //     watch: Comlink.proxy(fs.watch),
+            //     mkdir: Comlink.proxy(fs.mkdir),
+            //     readDir: Comlink.proxy(fs.readDir),
+            //     exists: Comlink.proxy(fs.exists),
+            //     stat: Comlink.proxy(fs.stat),
+            // }
+            // console.log('getting language env', language, test)
 
             await createLanguageServer(Comlink.proxy({ language, fs }));
         } catch (error) {

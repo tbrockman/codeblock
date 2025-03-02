@@ -4,6 +4,9 @@ import { FS } from "./types";
 import * as Comlink from 'comlink';
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from './rpc/serde';
 import { FileStat, FileType } from "@volar/language-service";
+import { fsbuffer } from 'virtual:@jsnix/snapshot';
+
+console.log('have fsbuffer', fsbuffer)
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
