@@ -1,12 +1,9 @@
-import type { Dirent, promises as fs, Stats } from "@zenfs/core";
+import type { Dirent, promises as fs } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { FS } from "./types";
 import * as Comlink from 'comlink';
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from './rpc/serde';
 import { FileStat, FileType } from "@volar/language-service";
-import { fsbuffer } from 'virtual:@jsnix/snapshot';
-
-console.log('have fsbuffer', fsbuffer)
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)

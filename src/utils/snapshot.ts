@@ -2,43 +2,73 @@ import path from 'node:path';
 import parse from 'parse-gitignore';
 import * as nodeFs from 'node:fs';
 import ignore, { Ignore } from 'ignore';
-import { promises as _fs, AsyncFSMethods, configure, CopyOnWrite, FileSystem, mount, Passthrough, PassthroughFS, resolveMountConfig, SingleBuffer } from "@zenfs/core";
+import { promises as _fs, configure, CopyOnWrite, mount, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 
-export type CopyDirOptions = {
-    src: typeof _fs;
-    dest: typeof _fs;
-    exclude?: Ignore;
-    rootDir?: string;
-}
+export const copyDir = async (fs: typeof _fs, source: string, dest: string, include: ignore.Ignore, exclude: ignore.Ignore) => {
+    const symlinkQueue: { src: string; dest: string }[] = [];
 
-export const copyDir = async function* (dir: string, { src, dest, exclude, rootDir = dir }: CopyDirOptions): AsyncGenerator<string> {
-    for await (let d of await src.opendir(dir)) {
-        const entry = path.join(dir, d.name);
-        const relativeEntry = path.relative(rootDir, entry);
+    async function copyRecursive(src: string, dst: string) {
+        try {
+            console.log('copying', src, 'to', dst)
+            const entries = await fs.readdir(src, { withFileTypes: true });
+            console.log('mkdir fs')
+            await fs.mkdir(dst, { recursive: true });
+            console.log('after mkdir')
 
-        if (exclude && exclude.ignores(relativeEntry)) {
-            continue;
-        }
+            for (const entry of entries) {
+                const srcPath = path.join(src, entry.name);
+                const srcRelPath = path.relative(source, srcPath);
+                const dstPath = path.join(dst, entry.name);
 
-        if (d.isDirectory()) {
-            await dest.mkdir(entry, { recursive: true });
-            yield* copyDir(entry, { src, dest, exclude, rootDir });
-        }
-        else if (d.isFile()) {
-            const contents = await src.readFile(entry, 'utf8');
-            await dest.writeFile(entry, contents, 'utf8');
-            yield entry;
-        }
-        else if (d.isSymbolicLink()) {
-            const symlink = await src.readlink(entry);
-            await dest.symlink(symlink, entry);
-            yield entry;
+                if (exclude.ignores(srcRelPath) || !include.ignores(srcRelPath)) continue;
+
+                console.log('copying', srcPath, 'to', dstPath)
+
+                if (entry.isDirectory()) {
+                    await copyRecursive(srcPath, dstPath);
+                } else if (entry.isFile()) {
+                    try {
+                        console.log('before reading')
+                        const data = nodeFs.readFileSync(srcRelPath);
+                        console.log('after reading', srcRelPath, data.length)
+                        await fs.writeFile(dstPath, data);
+                        console.log('after writing')
+                    } catch (e) {
+                        console.error(`Failed to copy ${srcPath} to ${dstPath}:`, e);
+                    }
+                } else if (entry.isSymbolicLink()) {
+                    symlinkQueue.push({ src: srcPath, dest: dstPath });
+                }
+            }
+        } catch (e) {
+            console.error(`Failed to copy ${src} to ${dest}:`, e);
         }
     }
-};
+
+    async function resolveSymlinks() {
+        for (const { src, dest } of symlinkQueue) {
+            try {
+                const target = await fs.readlink(src);
+                const absoluteTarget = path.resolve(path.dirname(src), target);
+
+                try {
+                    await fs.stat(absoluteTarget);
+                    await fs.symlink(target, dest);
+                } catch {
+                    await fs.copyFile(absoluteTarget, dest);
+                }
+            } catch (err) {
+                console.error(`Failed to copy symlink ${src}:`, err);
+            }
+        }
+    }
+
+    await copyRecursive(source, dest);
+    await resolveSymlinks();
+}
 
 export type IgnoreArgs = {
-    fs: AsyncFSMethods,
+    fs: typeof _fs,
     root: string,
     exclude: string[],
     gitignore: string | null
@@ -49,13 +79,12 @@ export const buildIgnore = async ({ fs, root, exclude, gitignore }: IgnoreArgs) 
 
     if (gitignore) {
         const resolved = path.resolve(root, gitignore);
+        console.log('...building gitignore')
 
         if (await fs.exists(resolved)) {
-            const buf = new Uint8Array();
-            const stat = await fs.stat(resolved)
-            await fs.read(resolved, buf, 0, stat.size)
+            const content = await fs.readFile(resolved, 'utf-8')
             // @ts-ignore
-            const { patterns } = parse(new TextDecoder().decode(buf, 'utf-8'));
+            const { patterns } = parse(content);
             excluded.add(patterns);
         }
     }
@@ -90,35 +119,29 @@ export type TakeSnapshotProps = {
  */
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const { root, include, exclude, gitignore } = { ...snapshotDefaults, ...props };
+    const buffer = new ArrayBuffer((1024 * 1024 * 1024) / 8);
 
-    // const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: 'C' });
-    // const writable = await resolveMountConfig()
-    console.log('resolved writable')
-    const readable = new PassthroughFS(nodeFs, '');
-    await configure({
-        mounts: {
-            '/mnt/snapshot': { backend: SingleBuffer, buffer: new ArrayBuffer(1024 * 1024 * 1024 / 2) },
-        }
-    })
-    mount('/tmp', readable);
-    await readable.ready()
-    await _fs.cp(process.cwd(), '/mnt/snapshot', {
-        recursive: true,
-        preserveTimestamps: true,
-        filter: async (source, _) => {
-            try {
-                const excluded = await buildIgnore({ fs: readable, root, exclude, gitignore });
-                const included = ignore().add(include);
-                const relativePath = path.relative(root, source);
-                const isIncluded = included.ignores(relativePath) === true;
-                const isNotExcluded = excluded.ignores(relativePath) === false;
-                return isIncluded && isNotExcluded
-            } catch (e) {
-                console.error(e)
-                return false;
-            }
-        },
-    });
+    try {
+        console.log('resolving config')
+        const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs });
+        const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
+        console.log('mounting')
+        mount('/mnt/host', readable);
+        mount('/mnt/snapshot', writable);
+        console.log('mounted')
+        await readable.ready()
+        await writable.ready()
+        const joined = path.join('/mnt/host', process.cwd())
+        console.log('building ingore', include, exclude)
+        const excluded = await buildIgnore({ fs: _fs, root, exclude, gitignore });
+        const included = ignore().add(include);
+        console.log('copying dir')
+        await copyDir(_fs, joined, '/mnt/snapshot', included, excluded)
+        console.log('writable', await writable.readdir('/'))
+    } catch (e) {
+        console.error('got error', e)
+    }
+    return buffer;
 
     // eslint-disable-next-line
     // for await (const _ of copyDir(root, { src, dest, include, exclude: excluded })) { }
