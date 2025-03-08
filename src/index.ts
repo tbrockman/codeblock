@@ -8,7 +8,9 @@ import { FileStat, FileType } from "@volar/language-service";
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
 
-const fsWorker = new SharedWorker(new URL('./workers/fs.ts', import.meta.url), { type: 'module' });
+const url = new URL('../dist/fs-worker.js', import.meta.url)
+console.log('worker url', url)
+const fsWorker = new SharedWorker(url, { type: 'module' });
 const fsInterface = Comlink.wrap<typeof fs>(fsWorker.port);
 
 const editorContainer = document.getElementById('editor') as HTMLDivElement;

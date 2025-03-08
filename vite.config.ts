@@ -49,6 +49,6 @@ export default async function getConfig() {
     return defineConfig({
         plugins: [
             snapshot({ gitignore: false })
-        ]
+        ],
     })
 }

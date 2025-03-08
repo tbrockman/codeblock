@@ -123,7 +123,7 @@ export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
 
     try {
         console.log('resolving config')
-        const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs });
+        const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: process.cwd() });
         const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
         console.log('mounting')
         mount('/mnt/host', readable);
@@ -131,12 +131,11 @@ export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
         console.log('mounted')
         await readable.ready()
         await writable.ready()
-        const joined = path.join('/mnt/host', process.cwd())
         console.log('building ingore', include, exclude)
         const excluded = await buildIgnore({ fs: _fs, root, exclude, gitignore });
         const included = ignore().add(include);
         console.log('copying dir')
-        await copyDir(_fs, joined, '/mnt/snapshot', included, excluded)
+        await copyDir(_fs, '/mnt/host', '/mnt/snapshot', included, excluded)
         console.log('writable', await writable.readdir('/'))
     } catch (e) {
         console.error('got error', e)

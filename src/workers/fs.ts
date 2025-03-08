@@ -1,4 +1,4 @@
-import { configure, CopyOnWrite, promises as fs, resolveMountConfig, SingleBuffer } from "@zenfs/core";
+import { configure, CopyOnWrite, promises as fs, resolveMountConfig, SingleBuffer, umount } from "@zenfs/core";
 import { WebAccess } from "@zenfs/dom";
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
@@ -16,29 +16,27 @@ onconnect = async function (event) {
     const buffer = await res.arrayBuffer();
     console.log('buffer retrieved', buffer)
 
-    const handle = await navigator.storage.getDirectory()
+    // const handle = await navigator.storage.getDirectory()
     // @ts-ignore
-    await handle.remove({ recursive: true });
+    // await handle.remove({ recursive: true });
 
-    await configure({
-        log: {
-            enabled: true,
-            level: 'debug',
-            output: console.debug
-        }
-    })
+    // await configure({
 
-    const writable = await resolveMountConfig({ backend: WebAccess, handle: await navigator.storage.getDirectory() })
-    const readable = await resolveMountConfig({ backend: SingleBuffer, buffer })
-    await readable.ready();
-    await writable.ready();
+    //     log: {
+    //         enabled: true,
+    //         level: 'debug',
+    //         output: console.debug
+    //     }
+    // })
 
+
+    umount('/')
     await configure({
         mounts: {
             '/': {
                 backend: CopyOnWrite,
-                readable,
-                writable
+                readable: { backend: SingleBuffer, buffer },
+                writable: { backend: WebAccess, handle: await navigator.storage.getDirectory() }
             }
         },
         log: {
@@ -47,15 +45,6 @@ onconnect = async function (event) {
             output: console.debug
         }
     })
-
-    await readable?._populate()
-    console.log('in fs worker', await fs.exists('/'))
-    console.log('dirs', await fs.readdir('/'))
-    console.log('readable dirs', await readable.readdir('/'))
-    console.log('readable exists', await readable.exists('/'))
-    console.log('readable usage', readable.usage())
-    console.log('is root dir?', await readable.stat('/').catch(e => e))
-    console.log('listing a known subdirectory:', await readable.readdir('/src').catch(e => e));
 
     // await configureSingle({ backend: WebAccess, handle: await navigator.storage.getDirectory() })
     const proxy = new Proxy(fs, {
