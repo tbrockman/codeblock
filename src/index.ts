@@ -1,4 +1,4 @@
-import type { Dirent, promises as fs } from "@zenfs/core";
+import type { Dirent } from "@zenfs/core";
 import { createCodeblock } from "./editor";
 import { FS } from "./types";
 import * as Comlink from 'comlink';
@@ -9,9 +9,12 @@ Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
 
 const url = new URL('../dist/fs-worker.js', import.meta.url)
-console.log('worker url', url)
+console.log('worker url', url.toString())
 const fsWorker = new SharedWorker(url, { type: 'module' });
-const fsInterface = Comlink.wrap<typeof fs>(fsWorker.port);
+fsWorker.port.start();
+const { init } = Comlink.wrap<any>(fsWorker.port);
+const { fs: fsInterface } = await init({})
+await fsInterface.writeFile('/example.ts', 'console.log("Hello, world!")');
 
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
 

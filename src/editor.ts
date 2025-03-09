@@ -207,6 +207,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
   "include": ["src/**/*"],
   "exclude": ["**/*.spec.ts"]
 }`
+            console.log('going to call readfile with fs: ', JSON.stringify({ fs }));
             const content = await fs.readFile(path);
             await fs.writeFile('tsconfig.json', test);
             await fs.writeFile('jsconfig.json', '{}');
@@ -260,7 +261,7 @@ const codeblockView = ViewPlugin.define((view: EditorView) => {
             console.log('applied all initial settings');
 
             // Start watching for file changes after the state is set up
-            startWatching();
+            // startWatching();
             console.log('after watch call');
         } catch (error) {
             console.error("Failed to initialize codeblock:", error);

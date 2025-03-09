@@ -1,4 +1,4 @@
-import { configure, CopyOnWrite, promises as fs, resolveMountConfig, SingleBuffer, umount } from "@zenfs/core";
+import { configureSingle, CopyOnWrite, promises as fs, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 import { WebAccess } from "@zenfs/dom";
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
@@ -6,61 +6,72 @@ import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../r
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
 
+export type InitArgs = {
+    buffer?: ArrayBuffer;
+}
+
 onconnect = async function (event) {
+    console.log('workers/fs connected on port: ', event.ports[0]);
 
-    console.log('fs worker started')
-    // TODO: make configurable
-    const fsSnapshot = new URL('/snapshot.bin', location.origin);
-    console.log('snapshot url', fsSnapshot)
-    const res = await fetch(fsSnapshot);
-    const buffer = await res.arrayBuffer();
-    console.log('buffer retrieved', buffer)
+    const init = async ({ buffer = new ArrayBuffer(0x100000) }: InitArgs) => {
+        console.log('Init started with buffer size:', buffer.byteLength);
+        try {
+            console.log('Getting storage directory...');
+            const handle = await navigator.storage.getDirectory();
+            console.log('Got storage directory');
 
-    // const handle = await navigator.storage.getDirectory()
-    // @ts-ignore
-    // await handle.remove({ recursive: true });
+            console.log('Attempting to remove directory...');
+            try {
+                // @ts-ignore
+                await handle.remove({ recursive: true });
+                console.log('Successfully removed directory');
+            } catch (removeErr) {
+                console.error('Error removing directory:', removeErr);
+                // Continue anyway, this might not be critical
+            }
 
-    // await configure({
+            console.log('Resolving mount config...');
+            const readable = await resolveMountConfig({
+                backend: SingleBuffer,
+                buffer,
+            });
+            console.log('Mount config resolved');
 
-    //     log: {
-    //         enabled: true,
-    //         level: 'debug',
-    //         output: console.debug
-    //     }
-    // })
-
-
-    umount('/')
-    await configure({
-        mounts: {
-            '/': {
+            console.log('Configuring single...');
+            await configureSingle({
                 backend: CopyOnWrite,
-                readable: { backend: SingleBuffer, buffer },
-                writable: { backend: WebAccess, handle: await navigator.storage.getDirectory() }
-            }
-        },
-        log: {
-            enabled: true,
-            level: 'debug',
-            output: console.debug
-        }
-    })
+                readable,
+                writable: {
+                    backend: WebAccess,
+                    handle: await navigator.storage.getDirectory()
+                }
+            });
+            console.log('Single configured');
 
-    // await configureSingle({ backend: WebAccess, handle: await navigator.storage.getDirectory() })
-    const proxy = new Proxy(fs, {
-        get(obj, prop) {
-            if (typeof obj[prop] === "function") {
-                return function (...args) {
-                    try {
-                        console.log(`Method called: ${prop}, Arguments: ${JSON.stringify(args)}`);
-                        return obj[prop].apply(this, args);
-                    } catch (e) {
-                        console.error(`Error calling method: ${prop}, Arguments: ${JSON.stringify(args)}, Error: ${e}`);
+            // Create and return proxy
+            console.log('Creating proxy...');
+            const proxy = new Proxy(fs, {
+                get(obj, prop) {
+                    if (typeof obj[prop] === "function") {
+                        return function (...args) {
+                            try {
+                                console.log(`Method called: ${prop}, Arguments: ${JSON.stringify(args)}`);
+                                return obj[prop].apply(this, args);
+                            } catch (e) {
+                                console.error(`Error calling method: ${prop}, Arguments: ${JSON.stringify(args)}, Error: ${e}`);
+                            }
+                        };
                     }
-                };
-            }
-            return obj[prop];
-        },
-    })
-    Comlink.expose(proxy, event.ports[0]);
+                    return obj[prop];
+                },
+            })
+            console.log('Returning proxy from worker');
+            return Comlink.proxy({ fs: proxy });
+        } catch (e) {
+            console.error('Worker initialization failed with error:', e);
+            throw e; // Make sure error propagates
+        }
+    }
+    console.log('about to expose init', init)
+    Comlink.expose({ init }, event.ports[0]);
 }

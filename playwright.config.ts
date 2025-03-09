@@ -6,6 +6,7 @@ export default defineConfig({
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
+  timeout: 10 * 1000,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
   /* Opt out of parallel tests on CI. */
@@ -37,7 +38,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'npm run dev',
+    command: 'vite', // Starts the Vite dev server
     url: 'http://localhost:5173', // Ensure it matches your local dev server
     reuseExistingServer: true,
     timeout: 10 * 1000, // Wait up to 10s for the server to start
