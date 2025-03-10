@@ -2,7 +2,7 @@ import path from 'node:path';
 import parse from 'parse-gitignore';
 import * as nodeFs from 'node:fs';
 import ignore, { Ignore } from 'ignore';
-import { promises as _fs, configure, configureSingle, CopyOnWrite, mount, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
+import { promises as _fs, configure, CopyOnWrite, mount, Passthrough, resolveMountConfig, SingleBuffer } from "@zenfs/core";
 
 export const copyDir = async (fs: typeof _fs, source: string, dest: string, include: ignore.Ignore, exclude: ignore.Ignore) => {
     const symlinkQueue: { src: string; dest: string }[] = [];
@@ -31,7 +31,14 @@ export const copyDir = async (fs: typeof _fs, source: string, dest: string, incl
                         console.log('before reading')
                         const data = nodeFs.readFileSync(srcRelPath);
                         console.log('after reading', srcRelPath, data.length)
-                        await fs.writeFile(dstPath, Buffer.from(data.buffer));
+                        const stats = nodeFs.statSync(srcRelPath);
+
+                        await fs.writeFile(dstPath, Buffer.from(data.buffer), { encoding: 'utf-8', flag: 'w', mode: stats.mode, flush: true });
+                        // Copy file metadata
+                        console.log('stats', stats)
+                        await fs.chown(dstPath, stats.uid, stats.gid);
+                        await fs.chmod(dstPath, stats.mode);
+                        await fs.utimes(dstPath, stats.atime, stats.mtime);
                         console.log('after writing')
                     } catch (e) {
                         console.error(`Failed to copy ${srcPath} to ${dstPath}:`, e);
@@ -119,29 +126,29 @@ export type TakeSnapshotProps = {
  */
 export const takeSnapshot = async (props: Partial<TakeSnapshotProps> = {}) => {
     const { root, include, exclude, gitignore } = { ...snapshotDefaults, ...props };
-    const buffer = new ArrayBuffer((1024 * 1024 * 1024) / 8);
+    const buffer = new Uint8Array(new ArrayBuffer((1024 * 1024 * 1024) / 24));
 
     try {
-        // console.log('resolving config')
-        // const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: process.cwd() });
-        // const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
-        // console.log('mounting')
-        // mount('/mnt/host', readable);
-        // mount('/mnt/snapshot', writable);
-        // console.log('mounted')
-        // await readable.ready()
-        // await writable.ready()
-        // console.log('building ingore', include, exclude)
-        // const excluded = await buildIgnore({ fs: _fs, root, exclude, gitignore });
-        // const included = ignore().add(include);
-        // console.log('copying dir')
-        // await copyDir(_fs, '/mnt/host', '/mnt/snapshot', included, excluded)
-        // console.log('writable', await writable.readdir('/'))
-        // console.log('fs')
+        console.log('resolving config')
+        const readable = await resolveMountConfig({ backend: Passthrough, fs: nodeFs, prefix: process.cwd() });
+        const writable = await resolveMountConfig({ backend: SingleBuffer, buffer });
+        console.log('mounting')
+        mount('/mnt/host', readable);
+        mount('/mnt/snapshot', writable);
+        console.log('mounted')
+        await readable.ready()
+        await writable.ready()
+        console.log('building ingore', include, exclude)
+        const excluded = await buildIgnore({ fs: _fs, root, exclude, gitignore });
+        const included = ignore().add(include);
+        console.log('copying dir')
+        await copyDir(_fs, '/mnt/host', '/mnt/snapshot', included, excluded)
+        console.log('writable', await writable.readdir('/'))
+        console.log('fs')
 
-        await configureSingle({ backend: SingleBuffer, buffer });
+        // await configureSingle({ backend: SingleBuffer, buffer });
         // const writable = await resolveMountConfig();
-        await _fs.writeFile('example.ts', 'console.log("hello world")');
+        // await _fs.writeFile('example.ts', 'console.log("hello world")');
     } catch (e) {
         console.error('got error', e)
     }

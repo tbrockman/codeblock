@@ -1,12 +1,8 @@
-import { FileStat, FileSystem, FileType, ProviderResult } from '@volar/language-service';
+import { FileSystem, FileType, ProviderResult } from '@volar/language-service';
 import { create as createTypeScriptServicePlugins } from 'volar-service-typescript'
 import { FS } from '../types';
 import { URI } from 'vscode-uri'
-import { Connection, createServerBase, createSimpleProject, createTypeScriptProject, loadTsdkByUrl } from '@volar/language-server/browser';
-import {
-    InitializeRequest,
-    type InitializeResult,
-} from "vscode-languageserver-protocol/browser";
+import { Connection, createServerBase, createTypeScriptProject } from '@volar/language-server/browser';
 import ts from 'typescript';
 
 // Credit: https://github.com/mdx-js/mdx-analyzer/blob/4bb0a8784f6f0bcf2a0b07cd7084989060828b8b/packages/language-server/lib/index.js#L62
@@ -18,7 +14,7 @@ export class VolarFS implements FileSystem {
         this.#fs = fs
     }
 
-    stat(uri: URI): ProviderResult<FileStat | undefined> {
+    stat(uri: URI): ProviderResult<any | undefined> {
         return this.#fs.stat(uri.path);
     }
     readDirectory(uri: URI): ProviderResult<[string, FileType][]> {

@@ -22,33 +22,23 @@ export type SnapshotProps = {
 
 export const snapshot = async (props: SnapshotProps = {}) => {
     const { root, include, exclude, gitignore, transform } = { ...viteDefaults, ...props };
-    const virtualModuleId = 'virtual:@jsnix/snapshot';
-    const resolvedVirtualModuleId = '\0' + virtualModuleId;
     // @ts-expect-error
     const fsBuffer = await transform?.(await takeSnapshot({ root, include, exclude, gitignore }));
-    console.log('fsbuffer', fsBuffer.slice(0, 1000))
-    await fs.writeFile('snapshot.bin', Buffer.from(fsBuffer));
+    // console.log('fsbuffer', fsBuffer.slice(0, 1000))
+    await fs.writeFile('./public/snapshot.bin', new Uint8Array(fsBuffer));
 
     console.log('snapshot written')
-    await configureSingle({ backend: SingleBuffer, buffer: Buffer.from(fsBuffer) });
-    console.log('readable', await zenfs.readdir('/'))
-    console.log('example.ts: \n', await zenfs.readFile('example.ts', { encoding: 'utf-8' }))
+    await configureSingle({ backend: SingleBuffer, buffer: new Uint8Array(fsBuffer) });
+    const dir = await zenfs.readdir('/');
+    console.log('dir', dir)
+
+    dir.forEach(async (file) => {
+        if ((await zenfs.stat(file)).isDirectory()) return;
+        console.log('content', file, (await zenfs.readFile(file, 'utf-8')).slice(0, 100));
+    })
 
     return {
-        name: '@jsnix/snapshot',
-        async resolveId(id: string) {
-            if (id === virtualModuleId) {
-                return resolvedVirtualModuleId;
-            }
-            return undefined;
-        },
-        async load(id: string) {
-            if (id === resolvedVirtualModuleId) {
-                // console.log('have fsbuffer:\n', arrayBufferToBase64(fsBuffer))
-                return `export const fsbuffer = ""`
-            }
-            return undefined;
-        },
+        name: '@jsnix/snapshot'
     };
 };
 

@@ -1,5 +1,5 @@
-import type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
-import { FileStat, FileType } from "@volar/language-service";
+import { FileType } from "@volar/language-service";
+import type { promises as fs } from "@zenfs/core";
 
 export interface FS {
     /**
@@ -59,5 +59,15 @@ export interface FS {
 
     stat: (
         path: string,
-    ) => Promise<FileStat | undefined>;
+    ) => Promise<any | undefined>;
+}
+
+export type FSWorkerInit = (args: InitArgs) => Promise<InitResult>;
+
+export type InitArgs = {
+    buffer?: ArrayBuffer;
+}
+
+export type InitResult = {
+    fs: typeof fs;
 }

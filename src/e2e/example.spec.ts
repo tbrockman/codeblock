@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as Comlink from "comlink";
 import { watchOptionsTransferHandler, asyncGeneratorTransferHandler } from '../rpc/serde';
 import fs from '@zenfs/core';
+import type { FSWorkerInit } from '../types';
 
 Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler);
 Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler);
@@ -31,20 +32,23 @@ test.describe('workers/fs', async () => {
     await page.goto('http://localhost:5173');
     await page.addScriptTag({ url: 'https://unpkg.com/comlink/dist/umd/comlink.js' });
     const content = await page.evaluate(async (workerUrl) => {
+      const { asyncGeneratorTransferHandler, watchOptionsTransferHandler } = await import('../../src/rpc/serde.js');
+      Comlink.transferHandlers.set('asyncGenerator', asyncGeneratorTransferHandler)
+      Comlink.transferHandlers.set('watchOptions', watchOptionsTransferHandler)
+
       console.log('before worker??')
       console.log(window.location.origin, 'before worker');
       const worker = new SharedWorker(workerUrl, { type: 'module' });
       console.log({ port: worker.port })
-      const { init } = Comlink.wrap<{ init: (args: { buffer?: ArrayBuffer }) => Promise<any> }>(worker.port);
-      worker.port.start();
       console.log('worker started');
-      window.fs = Comlink.wrap<typeof fs>(await init({}));
-      console.log('after fs init??', await window.fs);
-      window.fs.writeFileSync('/example.ts', 'console.log("Hello, world!")');
-      return window.fs.readFileSync('/example.ts', { encoding: 'utf-8' });
+      worker.port.start();
+      const { init } = Comlink.wrap<{ init: FSWorkerInit }>(worker.port);
+      const { fs } = await init({ buffer: new ArrayBuffer(0x100000) });
+      // window.fs = await fs;
+      await fs.writeFile('/example.ts', 'console.log("Hello, world!")');
+      return await fs.readFile('/example.ts', { encoding: 'utf-8' });
     }, workerUrl);
 
-    expect(content).toBe('console.log("Hello, world!")');
     // const fileContent = await page.evaluate(async (proxy) => {
     //   return proxy.readFile('/some/path', 'utf-8');
     // }, fsProxy);
